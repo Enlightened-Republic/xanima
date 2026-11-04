@@ -86,9 +86,9 @@ describe("inner life: needs decay (homeostatic drives)", () => {
     const ins = db.prepare("INSERT INTO episodes (id, session_id, role, content, created_at) VALUES (?, 's', 'assistant', 'work', ?)");
     for (let i = 1; i <= 20; i++) ins.run(randomUUID(), T0 + i * 60_000);
     innerTick(id, {}, T0 + 20 * 60_000);
-    expect(need(id, "rest", T0 + 20 * 60_000).level).toBeCloseTo(REST_START - 20 * 0.012, 5);
+    expect(need(id, "rest", T0 + 20 * 60_000).level).toBeCloseTo(REST_START - 20 * 0.006, 5);
     innerTick(id, {}, T0 + 20 * 60_000 + 5.5 * H);
-    expect(need(id, "rest", T0 + 20 * 60_000 + 5.5 * H).level).toBeGreaterThan(Math.min(1, REST_START - 20 * 0.012 + 0.2) - 1e-9);
+    expect(need(id, "rest", T0 + 20 * 60_000 + 5.5 * H).level).toBeGreaterThan(Math.min(1, REST_START - 20 * 0.006 + 0.2) - 1e-9);
     closeDb(id);
   });
 
