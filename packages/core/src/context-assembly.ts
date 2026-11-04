@@ -17,6 +17,7 @@ import { detectSkillCandidates } from "./skill-evolution.js";
 import { bootstrapRetrieve } from "./retrieval.js";
 import { hybridRetrieve } from "./retrieval.js";
 import { getNeuromodulatorState } from "./consolidation.js";
+import { innerTurnHeader } from "./inner-life.js";
 import { getMeta, getDb } from "./db.js";
 import { beliefTag, relativeTime } from "./belief-meta.js";
 import { computeBrainStatus, statusFooter } from "./beliefs.js";
@@ -141,6 +142,14 @@ export async function buildSelfModelHeader(
       );
     } catch (err) {
       log?.warn(`[xanima] selfModelHeader neuro failed: ${String(err)}`);
+    }
+    // Inner life (v29): current mood, top unmet need, top want (≤3 lines). Ticks its own
+    // inner_* tables only — never ripple counts or retrieval state.
+    try {
+      const inner = innerTurnHeader(agentId, _config ?? {});
+      if (inner) parts.push(inner);
+    } catch (err) {
+      log?.warn(`[xanima] selfModelHeader inner failed: ${String(err)}`);
     }
   }
 

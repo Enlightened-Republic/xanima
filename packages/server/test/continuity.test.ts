@@ -59,7 +59,12 @@ describe("continuity tools on the service", () => {
       expect((await tool(h.url, h.mint("ro3", ["read"]), "brain_turn_context", { ack_note_id: t1.noteId })).isError).toBe(true);
       expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { ack_note_id: t1.noteId })).text)).toEqual({ acked: true, noteId: t1.noteId });
       expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { ack_note_id: t1.noteId })).text).acked).toBe(false);
-      expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text).text).toBe("");
+      expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text).text.replace(/^\[inner[^\n]*(\n|$)/gm, "")).toBe(""); // only the [inner] state block, no nudge
+      // inner life (v29): the turn context carries the [inner] block on its own and at the head of `text`
+      const ti = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text) as { text: string; inner?: string };
+      expect(ti.inner).toMatch(/^\[inner · functional states\] mood [+−]\d\.\d\d/);
+      expect(ti.inner!.split("\n").length).toBeLessThanOrEqual(3);
+      expect(ti.text.startsWith(ti.inner!)).toBe(true);
       const t3 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "send the invoice please" })).text);
       expect(t3.triggered[0].why).toBe('you mentioned "invoice"');
       const st = await tool(h.url, a, "brain_status", { visibility: "private" });

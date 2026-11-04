@@ -28,7 +28,7 @@ describe("current task on the service", () => {
       expect(t0.activeGoals).toEqual(["Ship the Gano Telegram bot"]);
       // … and held on a bare "continue" (stays pending, not acked, not counted)
       const t1 = JSON.parse((await tool(h.url, tok, "brain_turn_context", { query: "continue", session_key: S })).text) as { text: string; noteIds: number[]; held?: number };
-      expect(t1.text).toBe("");
+      expect(t1.text.replace(/^\[inner[^\n]*(\n|$)/gm, "")).toBe(""); // the [inner] state block rides every turn; no nudge
       expect(t1.noteIds).toEqual([]);
       expect(t1.held).toBe(1);
 
@@ -52,7 +52,7 @@ describe("current task on the service", () => {
       expect(ho.text).toMatch(/\[handed_off → mia\] Ship the Gano Telegram bot/);
       const t3 = JSON.parse((await tool(h.url, tok, "brain_turn_context", { query: "hello", session_key: S })).text) as { text: string; now?: string; activeGoals?: string[] };
       expect(t3.activeGoals).toBeUndefined();
-      expect(t3.text).toBe("");
+      expect(t3.text.replace(/^\[inner[^\n]*(\n|$)/gm, "")).toBe("");
       expect(t3.now).toMatch(/Handed off just now: goal "Ship the Gano Telegram bot" → mia \(mia runs the bot\) — theirs now, not yours\./);
       expect((await tool(h.url, tok, "brain_list_goals", { status: "handed_off" })).text).toMatch(/handed to mia just now: mia runs the bot/);
       expect((await tool(h.url, tok, "brain_status", {})).text).toMatch(/now: Billing migration \(session agent:alice:main[\s\S]*handed off just now: goal "Ship the Gano Telegram bot" → mia/);
