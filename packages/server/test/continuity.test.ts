@@ -62,7 +62,7 @@ describe("continuity tools on the service", () => {
       expect(JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text).text.replace(/^\[inner[^\n]*(\n|$)/gm, "")).toBe(""); // only the [inner] state block, no nudge
       // inner life (v29): the turn context carries the [inner] block on its own and at the head of `text`
       const ti = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "hello" })).text) as { text: string; inner?: string };
-      expect(ti.inner).toMatch(/^\[inner · functional states\] mood [+−]\d\.\d\d/);
+      expect(ti.inner).toMatch(/^\[inner · functional states\] mood (Sad|Low|Okay|Good|Happy)( → [A-Z][a-z]+)? [+−]\d\.\d\d/);
       expect(ti.inner!.split("\n").length).toBeLessThanOrEqual(3);
       expect(ti.text.startsWith(ti.inner!)).toBe(true);
       const t3 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "send the invoice please" })).text);

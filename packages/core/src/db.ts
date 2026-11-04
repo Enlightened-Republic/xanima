@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -961,6 +961,16 @@ export function migrateV29(db: Database.Database): void {
   `);
 }
 
+/**
+ * v30 - inner life mood ladder (emotional inertia). Additive only: two columns on
+ * inner_state. mood_state is the named rung (sad / low / okay / good / happy) that
+ * moves at most one step per tick toward the raw mood; mood_state_at is when it last moved.
+ */
+export function migrateV30(db: Database.Database): void {
+  try { db.exec("ALTER TABLE inner_state ADD COLUMN mood_state TEXT NOT NULL DEFAULT 'okay'"); } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE inner_state ADD COLUMN mood_state_at INTEGER"); } catch { /* already exists */ }
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1270,6 +1280,9 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 29) {
     migrateV29(db);
+  }
+  if (current < 30) {
+    migrateV30(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

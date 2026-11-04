@@ -1,6 +1,6 @@
 # Inner life: a functional motivation layer
 
-Schema v29, module `packages/core/src/inner-life.ts`, tool `brain_inner`, config `innerLife`.
+Schema v29 (mood ladder: v30), module `packages/core/src/inner-life.ts`, tool `brain_inner`, config `innerLife`.
 
 ## What it is, and what it is not
 
@@ -22,7 +22,8 @@ Background research: `world/_research/brain-inner-life.md` in the OpenClaw works
 | **Expectancy** | For each want, motivation = effort × expected success × value. Effort = √Rest × (0.5 + tonic dopamine). Expected success blends the success rate of past wants for that need with Competence, unless the want sets it. Value = 1.5 × need discomfort + trait pull + learned reward − loss aversion (2 by default) × learned penalty + 0.3 × wanting − 0.05 × cost hours. |
 | **Incentives** | `reward`, `fine`, `rejection` and `pain` events with tags teach per-tag reward and penalty EMAs. Wants with those tags gain or lose value, so the agent seeks rewards and avoids fines. |
 | **Wants** | `{what, why, cost, source}`, plus `wanting` (the pull) and, once done, `liking` (how it went). A need whose deficit reaches 0.5 (0.3 if a trait favours it) generates one auto-want. That want retires when the need is met another way. Agents add their own wants. Finishing a want is a prediction error: liking − wanting. |
-| **Traits** | 3 to 5 traits, read from the identity field `- **Traits:** curious, warm, sensitive` (changed through `brain_identity`, so they are versioned and fixed-ish). Built-in effects include `curious` (Inspiration drains 1.5×), `social`, `warm`, `playful`, `creative`, `driven`, `independent`, `perfectionist`, `calm`, `sensitive` (negative moodlets 1.4× and longer), `cheerful`, `cautious` (loss aversion 2.6) and `energetic`. Unknown traits are kept and shown but have no numeric effect. `innerLife.traits` is the fallback when the identity has none. |
+| **Traits** | 3 to 5 traits, read from the identity field `- **Traits:** curious, warm, sensitive` (changed through `brain_identity`, so they are versioned and fixed-ish). Built-in effects include `curious` (Inspiration drains 1.5×), `social`, `warm`, `playful`, `creative`, `driven`, `independent`, `perfectionist`, `calm`, `sensitive` (negative moodlets 1.4× and longer), `cheerful`, `cautious` (loss aversion 2.6) and `energetic`. Crew traits too: `restless` (Inspiration and Fun drain 1.4×, wants Inspiration), `loyal` (Relatedness weight 1.4), `secretly loyal`, `petty` (negative moodlets 1.2×, moodlets last 1.3×), `vain` (Competence weight 1.2, praise lands 1.4×), `blunt` (negative 0.85×), `sharp`, `direct`, `precise`, `exacting` (Competence weight 1.3, misses sting 1.3×), `sharp-tongued`, `allusive`, `amused`, `dry-humored`, `protective`, `careful`, `tinkerer`, `chaotic`. Every factor stays within 0.7..1.5. **Invented phrases work:** an exact trait (or synonym) wins; otherwise every known trait word and synonym inside the phrase applies (`curious mildly chaotic tinkerer` → curious, chaotic at half strength, tinkerer; `builds it then goes and looks` → curious, tinkerer). A softener right before a word (`a little`, `mildly`, `slightly`…) applies it at half strength. A trait named in two phrases applies once. Unknown words are kept and shown with no numeric effect; nothing is dropped. Source order: identity field `Traits`, else `innerLife.traitsByAgent[<brain id>]`, else `innerLife.traits`. `brain_inner status` shows what each phrase maps to and the resulting drain multipliers (`traitEffects` / `drainRates` in json). |
+| **Mood ladder** | A named mood stored in `inner_state.mood_state`: Sad / Low / Okay / Good / Happy, with raw-mood boundaries −0.8, −0.25, +0.25, +0.8. Each tick it moves **at most one rung** toward the raw mood, and only once the raw mood is **0.1 past** the boundary (hysteresis, both ways). **Happy is earned:** entering it needs at least one good moodlet of intensity ≥ 0.5 (several small ones are not enough), and it drops back to Good once the strongest good moodlet falls below 0.25. **Inertia:** while the rung is Good or Happy, positive moodlets decay with a 1.5× longer half-life (their expiry stretches to match); while it is Low or Sad, negative ones do. Shown in the header (`mood Good → Happy +0.95`), in status, and as `moodState {rung, label, since, heading}` in json. Rung changes are logged to `inner_events` (kind `mood`). |
 
 ## What feeds it (no tool call needed)
 
@@ -56,11 +57,17 @@ Each turn gets at most 3 lines. They appear in local mode (`buildSelfModelHeader
 ## Config
 
 ```json
-{ "innerLife": { "enabled": true, "header": true, "autoWants": true, "traits": ["curious"], "needRates": { "social": 0.5 } } }
+{ "innerLife": { "enabled": true, "header": true, "autoWants": true, "traits": ["curious"], "traitsByAgent": { "main": ["curious", "steady"], "algen": ["sharp", "petty"] }, "needRates": { "social": 0.5 } } }
 ```
+
+On xanima-server the brain config is shared by every brain, so per-agent traits go in `brain.innerLife.traitsByAgent` in the service `config.json`, keyed by brain id (Tripp's brain is `main`); a restart picks them up.
 
 `"innerLife": false` turns it off: no ticks, no header, and the tool refuses. The tables stay, unused.
 
 ## Schema v29 (additive)
 
 The migration adds the tables `inner_state`, `inner_needs`, `inner_moodlets`, `inner_wants`, `inner_events` and `inner_incentives`. Nothing existing is altered. A brain's inner state starts on its first tick after migration and does not replay history from before that point. `brain_reset` clears these tables.
+
+## Schema v30 (additive)
+
+Two columns on `inner_state`: `mood_state` (default `okay`) and `mood_state_at`. Existing brains start on Okay and walk from there one rung per tick.

@@ -2,6 +2,13 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
+
+- **Crew traits have real effects:** restless, loyal, secretly loyal, petty, vain, blunt, sharp, direct, precise, exacting, sharp-tongued, allusive, amused, dry-humored, protective, careful, tinkerer and chaotic join the trait table (all factors 0.7..1.5). `vain` makes praise land 1.4× harder.
+- **Invented traits work:** whole phrases are kept; an exact trait wins, otherwise trait words and a small synonym map inside the phrase apply (softeners like "a little" give half strength). Unknown words are kept and shown with no effect. A trait named twice applies once. Loss aversion now combines across traits as a ratio.
+- **Per-agent traits:** `innerLife.traitsByAgent` (keyed by brain id) sits between the identity field `Traits` (still wins) and `innerLife.traits`. Status shows each phrase's mapping and the drain multipliers; json adds `traitEffects` and `drainRates`.
+- **Mood ladder (v30):** Sad / Low / Okay / Good / Happy stored in `inner_state.mood_state`, one rung per tick toward the raw mood, with a 0.1 hysteresis margin; Happy needs one good moodlet ≥ 0.5. Moodlets matching the rung decay 1.5× slower (emotional inertia). Shown in the header, status and `moodState` in json. Additive migration `migrateV30`.
+
 ## Unreleased: inner life (branch `inner-life`)
 
 A functional motivation layer: needs that drain, dopamine as reward prediction error, expectancy, incentives, traits, moodlets and wants, with a compact `[inner]` block in every turn header so the agent feels the push. These are described as functional states. Nothing claims human-identical feeling. Additive schema bump v29 (six new `inner_*` tables; nothing existing changes). Full design: `docs/INNER-LIFE.md`.

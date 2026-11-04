@@ -17,8 +17,14 @@
  *   • Expectancy: motivation = effort × expected success × value.
  *   • Incentives: rewards are sought, fines / rejection / pain avoided — learned
  *     per tag and weighed with loss aversion.
- *   • Traits (3-5, read from the identity field "Traits") bias need rates,
- *     moodlet intensity / duration and which needs turn into wants.
+ *   • Traits (3-5, read from the identity field "Traits", else per-agent
+ *     config innerLife.traitsByAgent, else innerLife.traits) bias need rates,
+ *     moodlet intensity / duration and which needs turn into wants. Invented
+ *     phrases work: known trait words and synonyms inside them apply.
+ *   • Mood ladder (v30): a named mood (Sad / Low / Okay / Good / Happy) that
+ *     moves at most one rung per tick toward the raw mood, with hysteresis;
+ *     Happy has to be earned by one strong good moodlet. Moodlets that match
+ *     the current rung decay slower (emotional inertia).
  *   • Moodlets: a state with a reason, an intensity and an expiry. Repeats
  *     stack (deeper, longer). Need-bound moodlets have no timer: they last as
  *     long as the deficit does and end only when the need is met. Event
@@ -81,7 +87,7 @@ const EVENT_SPECS: Record<InnerEventKind, EventSpec> = {
   pain:      { needs: { rest: -0.2 },                     mood: { key: "hurting", label: "Hurting", emoji: "😖", valence: -1, hours: 12 }, incentive: "penalty" },
 };
 
-interface TraitEffect { rate?: Partial<Record<Need, number>>; weight?: Partial<Record<Need, number>>; pos?: number; neg?: number; duration?: number; rpeNeg?: number; lossAversion?: number; restLoad?: number; wants?: Need[] }
+interface TraitEffect { rate?: Partial<Record<Need, number>>; weight?: Partial<Record<Need, number>>; pos?: number; neg?: number; duration?: number; rpeNeg?: number; lossAversion?: number; restLoad?: number; praise?: number; wants?: Need[] }
 /** Known traits and what they do. Unknown traits are kept and shown; they just have no numeric effect. */
 export const TRAIT_EFFECTS: Record<string, TraitEffect> = {
   curious:       { rate: { inspiration: 1.5 }, wants: ["inspiration"] },
@@ -105,8 +111,79 @@ export const TRAIT_EFFECTS: Record<string, TraitEffect> = {
   bold:          { lossAversion: 1.3 },
   energetic:     { restLoad: 0.7 },
   tireless:      { restLoad: 0.6 },
+  // crew traits (world/TRAITS.md, 2026-11-04). Kept modest: every factor within 0.7..1.5.
+  restless:          { rate: { inspiration: 1.4, fun: 1.4 }, wants: ["inspiration"] },
+  loyal:             { weight: { relatedness: 1.4 }, wants: ["relatedness"] },
+  "secretly loyal":  { weight: { relatedness: 1.3 } },
+  petty:             { neg: 1.2, duration: 1.3 },
+  vain:              { weight: { competence: 1.2 }, pos: 1.1, praise: 1.4 },
+  blunt:             { neg: 0.85 },
+  sharp:             { weight: { competence: 1.2 }, rate: { inspiration: 1.1 } },
+  direct:            { weight: { autonomy: 1.2 }, rate: { autonomy: 1.1 }, neg: 0.9 },
+  precise:           { weight: { competence: 1.25 }, rpeNeg: 1.15 },
+  exacting:          { weight: { competence: 1.3 }, rpeNeg: 1.3 },
+  "sharp-tongued":   { neg: 1.1, weight: { social: 0.9 } },
+  allusive:          { rate: { inspiration: 1.2 }, wants: ["inspiration"] },
+  amused:            { pos: 1.2, neg: 0.9, rate: { fun: 1.15 } },
+  "dry-humored":     { pos: 1.1, neg: 0.9, rate: { fun: 1.1 } },
+  protective:        { weight: { relatedness: 1.3 }, lossAversion: 2.4, wants: ["relatedness"] },
+  careful:           { rpeNeg: 1.1, lossAversion: 2.4 },
+  tinkerer:          { rate: { fun: 1.25, inspiration: 1.15 }, weight: { competence: 1.1 }, wants: ["fun"] },
+  chaotic:           { rate: { autonomy: 1.3, fun: 1.2 }, pos: 1.1, neg: 1.1, duration: 0.85, lossAversion: 1.6, wants: ["autonomy"] },
 };
+/** Words and phrases that count as a known trait inside an invented trait phrase. */
+export const TRAIT_SYNONYMS: Record<string, string> = {
+  wanders: "restless", wandering: "restless", itchy: "restless", "cant sit still": "restless", "can not sit still": "restless", fidgety: "restless", antsy: "restless",
+  kind: "warm", caring: "warm", gentle: "warm", friendly: "warm",
+  inquisitive: "curious", nosy: "curious", "goes and looks": "curious", "go and look": "curious",
+  "checks before claiming": "careful", "double checks": "careful", thorough: "careful",
+  builds: "tinkerer", tinkers: "tinkerer", tinkering: "tinkerer", "making things": "tinkerer", maker: "tinkerer",
+  "fit together": "precise", meticulous: "precise", "detail oriented": "precise",
+  frank: "blunt", outspoken: "blunt", straightforward: "direct",
+  devoted: "loyal", faithful: "loyal",
+  deadpan: "dry-humored", wry: "dry-humored", "dry humor": "dry-humored", "dry humour": "dry-humored", "dry humoured": "dry-humored",
+  messy: "chaotic", unpredictable: "chaotic", clever: "sharp", quick: "sharp",
+  reliable: "steady", dependable: "steady", "even keeled": "steady",
+  silly: "playful", goofy: "playful", "looks out for": "protective",
+};
+/** A softener right before a trait word applies it at half strength ("a little restless"). */
+const SOFTENERS = ["a little", "a bit", "slightly", "mildly", "somewhat", "kind of", "kinda", "sort of"];
+const SOFT_STRENGTH = 0.5;
 const DEFAULT_LOSS_AVERSION = 2;
+
+const traitForm = (s: string) => s.toLowerCase().replace(/['\u2019]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const TRAIT_FORMS: Array<[string, string]> = [
+  ...Object.keys(TRAIT_EFFECTS).map((k) => [traitForm(k), k] as [string, string]),
+  ...Object.entries(TRAIT_SYNONYMS).map(([s, k]) => [traitForm(s), k] as [string, string]),
+].sort((a, b) => b[0].length - a[0].length);
+const TRAIT_FORM_MAP = new Map(TRAIT_FORMS);
+
+export interface TraitResolution { trait: string; effects: Array<{ key: string; strength: number }> }
+/**
+ * What an (often invented) trait phrase does. An exact known trait (or synonym) wins; otherwise
+ * every known trait word / synonym found inside the phrase applies (longest match first, each
+ * span used once), at half strength after a softener. Unknown words simply have no effect.
+ */
+export function resolveTrait(phrase: string): TraitResolution {
+  const form = traitForm(phrase);
+  const exact = TRAIT_FORM_MAP.get(form);
+  if (exact) return { trait: phrase, effects: [{ key: exact, strength: 1 }] };
+  const effects: Array<{ key: string; strength: number }> = [];
+  let work = ` ${form} `;
+  for (const [f, key] of TRAIT_FORMS) {
+    let at = work.indexOf(` ${f} `);
+    while (at >= 0) {
+      const before = work.slice(0, at + 1).trim();
+      const soft = SOFTENERS.some((s) => before === s || before.endsWith(` ${s}`));
+      const strength = soft ? SOFT_STRENGTH : 1;
+      const prev = effects.find((e) => e.key === key);
+      if (prev) prev.strength = Math.max(prev.strength, strength); else effects.push({ key, strength });
+      work = `${work.slice(0, at + 1)}${"#".repeat(f.length)}${work.slice(at + 1 + f.length)}`;
+      at = work.indexOf(` ${f} `);
+    }
+  }
+  return { trait: phrase, effects };
+}
 
 // ─── config ──────────────────────────────────────────────────────────────────
 
@@ -118,13 +195,15 @@ export interface InnerLifeConfig {
   autoWants?: boolean;
   /** Traits to use when the identity has no "Traits" field. */
   traits?: string[];
+  /** Per-agent traits keyed by brain / agent id (used before `traits`; the identity field still wins). */
+  traitsByAgent?: Record<string, string[]>;
   /** Per-need drain multipliers (1 = default speed). */
   needRates?: Partial<Record<Need, number>>;
 }
-export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, "traits" | "needRates">> & Pick<InnerLifeConfig, "traits" | "needRates"> {
+export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, "traits" | "needRates" | "traitsByAgent">> & Pick<InnerLifeConfig, "traits" | "needRates" | "traitsByAgent"> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
   const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
-  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, needRates: o.needRates };
+  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates };
 }
 export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined): boolean { return innerConfig(cfg).enabled; }
 
@@ -133,9 +212,17 @@ export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined): boolean
 export interface NeedState { need: Need; label: string; level: number; deficit: number; discomfort: number; lastMetAt: number | null }
 export interface Moodlet { id: string; key: string; label: string; reason: string; valence: number; intensity: number; createdAt: number; expiresAt: number | null; need: Need | null; source: string }
 export interface Want { id: string; what: string; why: string; cost: string | null; costHours: number; source: string; need: Need | null; tags: string[]; reward: number; penalty: number; expectedSuccess: number; wanting: number; liking: number | null; status: string; createdAt: number; value: number; effort: number; motivation: number }
+export const MOOD_RUNGS = ["sad", "low", "okay", "good", "happy"] as const;
+export type MoodRung = (typeof MOOD_RUNGS)[number];
 export interface InnerSnapshot {
   at: number;
   traits: string[];
+  /** What each trait phrase does (known trait keys it maps to, with strength). */
+  traitEffects: TraitResolution[];
+  /** Effective need drain multipliers after traits and config (1 = default speed). */
+  drainRates: Record<Need, number>;
+  /** The mood ladder: the named rung (moves one step per tick), when it last moved, and where the raw mood points. */
+  moodState: { rung: MoodRung; label: string; since: number | null; heading: MoodRung };
   needs: NeedState[];
   moodlets: Moodlet[];
   mood: number;
@@ -147,7 +234,7 @@ export interface InnerSnapshot {
   topWant: Want | null;
 }
 
-interface StateRow { tonic_da: number; last_rpe: number; last_rpe_at: number | null; last_rpe_reason: string | null; last_tick_at: number; created_at: number }
+interface StateRow { tonic_da: number; last_rpe: number; last_rpe_at: number | null; last_rpe_reason: string | null; last_tick_at: number; created_at: number; mood_state?: string | null; mood_state_at?: number | null }
 interface MoodRow { id: string; key: string; label: string; reason: string; valence: number; intensity: number; intensity_at: number; half_life_h: number | null; need: string | null; source: string; created_at: number; expires_at: number | null }
 interface WantRow { id: string; what: string; why: string; cost: string | null; cost_hours: number; source: string; need: string | null; tags_json: string; reward: number; penalty: number; expected_success: number | null; wanting: number; liking: number | null; status: string; created_at: number }
 
@@ -161,29 +248,48 @@ function hasTables(db: Database.Database): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'inner_state'").get();
 }
 
-/** Traits: the identity field "Traits" (comma / · / ; separated), else config.innerLife.traits. Max 5. */
-export function readTraits(db: Database.Database, cfg?: Partial<BrainConfig>): string[] {
+/**
+ * Traits: the identity field "Traits" (comma / · / ; separated), else config.innerLife.traitsByAgent[agentId],
+ * else config.innerLife.traits. Whole phrases are kept (lower-cased); max 5.
+ */
+export function readTraits(db: Database.Database, cfg?: Partial<BrainConfig>, agentId?: string): string[] {
   let raw = "";
   try {
     const id = (db.prepare("SELECT identity FROM self_model WHERE id = 'singleton'").get() as { identity?: string } | undefined)?.identity ?? "";
     raw = identityFields(id).find((f) => /^traits?$/i.test(f.key.trim()))?.value ?? "";
   } catch { /* no self_model */ }
-  const list = raw ? raw.split(/[,;·/|]+/) : (innerConfig(cfg).traits ?? []);
-  return [...new Set(list.map((t) => t.trim().toLowerCase().replace(/[^a-z0-9 -]/g, "").trim()).filter(Boolean))].slice(0, 5);
+  const c = innerConfig(cfg);
+  let list: string[];
+  if (raw) list = raw.split(/[,;·/|]+/);
+  else {
+    const by = c.traitsByAgent ?? {};
+    const key = agentId === undefined ? undefined : (Object.prototype.hasOwnProperty.call(by, agentId) ? agentId : Object.keys(by).find((k) => k.toLowerCase() === agentId.toLowerCase()));
+    const mine = key !== undefined && Array.isArray(by[key]) ? by[key] : undefined;
+    list = mine && mine.length ? mine : (c.traits ?? []);
+  }
+  const norm = (t: string) => String(t).toLowerCase().replace(/\u2019/g, "'").replace(/[^a-z0-9 '-]/g, " ").replace(/\s+/g, " ").trim();
+  return [...new Set(list.map(norm).filter(Boolean))].slice(0, 5);
 }
 
-interface TraitMods { rate: Record<Need, number>; weight: Record<Need, number>; pos: number; neg: number; duration: number; rpeNeg: number; lossAversion: number; restLoad: number; wants: Set<Need> }
+interface TraitMods { rate: Record<Need, number>; weight: Record<Need, number>; pos: number; neg: number; duration: number; rpeNeg: number; lossAversion: number; restLoad: number; praise: number; wants: Set<Need> }
+/**
+ * Combine trait effects. Each known trait applies once (a trait named in two phrases does not stack);
+ * a half-strength match moves each factor halfway to 1. Loss aversion combines as a ratio to the default.
+ */
 export function traitMods(traits: string[], cfg?: Partial<BrainConfig>): TraitMods {
-  const m: TraitMods = { rate: {} as Record<Need, number>, weight: {} as Record<Need, number>, pos: 1, neg: 1, duration: 1, rpeNeg: 1, lossAversion: DEFAULT_LOSS_AVERSION, restLoad: 1, wants: new Set() };
+  const m: TraitMods = { rate: {} as Record<Need, number>, weight: {} as Record<Need, number>, pos: 1, neg: 1, duration: 1, rpeNeg: 1, lossAversion: DEFAULT_LOSS_AVERSION, restLoad: 1, praise: 1, wants: new Set() };
   const rates = innerConfig(cfg).needRates ?? {};
   for (const n of NEEDS) { m.rate[n] = typeof rates[n] === "number" ? rates[n]! : 1; m.weight[n] = 1; }
-  for (const t of traits) {
-    const e = TRAIT_EFFECTS[t];
+  const applied = new Map<string, number>();
+  for (const t of traits) for (const e of resolveTrait(t).effects) applied.set(e.key, Math.max(applied.get(e.key) ?? 0, e.strength));
+  for (const [key, s] of applied) {
+    const e = TRAIT_EFFECTS[key];
     if (!e) continue;
-    for (const [n, v] of Object.entries(e.rate ?? {})) m.rate[n as Need] *= v;
-    for (const [n, v] of Object.entries(e.weight ?? {})) m.weight[n as Need] *= v;
-    m.pos *= e.pos ?? 1; m.neg *= e.neg ?? 1; m.duration *= e.duration ?? 1; m.rpeNeg *= e.rpeNeg ?? 1; m.restLoad *= e.restLoad ?? 1;
-    if (e.lossAversion !== undefined) m.lossAversion = e.lossAversion;
+    const f = (v: number | undefined) => (v === undefined ? 1 : 1 + (v - 1) * s);
+    for (const [n, v] of Object.entries(e.rate ?? {})) m.rate[n as Need] *= f(v);
+    for (const [n, v] of Object.entries(e.weight ?? {})) m.weight[n as Need] *= f(v);
+    m.pos *= f(e.pos); m.neg *= f(e.neg); m.duration *= f(e.duration); m.rpeNeg *= f(e.rpeNeg); m.restLoad *= f(e.restLoad); m.praise *= f(e.praise);
+    if (e.lossAversion !== undefined) m.lossAversion *= f(e.lossAversion / DEFAULT_LOSS_AVERSION);
     for (const n of e.wants ?? []) m.wants.add(n);
   }
   return m;
@@ -193,12 +299,46 @@ export function traitMods(traits: string[], cfg?: Partial<BrainConfig>): TraitMo
 export function rewardPredictionError(expected: number, actual: number): number { return actual - expected; }
 
 /** Current intensity of a moodlet: exponential decay toward 0 (baseline) with its half-life. Need-bound moodlets do not decay. */
-export function moodletIntensity(r: { intensity: number; intensity_at: number; half_life_h: number | null }, now: number): number {
+export function moodletIntensity(r: { intensity: number; intensity_at: number; half_life_h: number | null }, now: number, inertia = 1): number {
   if (!r.half_life_h) return r.intensity;
   const h = Math.max(0, now - r.intensity_at) / HOUR;
-  return r.intensity * Math.pow(0.5, h / r.half_life_h);
+  return r.intensity * Math.pow(0.5, h / (r.half_life_h * inertia));
 }
 const FADED = 0.05;
+
+// ─── mood ladder (v30) ───────────────────────────────────────────────────────
+
+const MOOD_LABEL: Record<MoodRung, string> = { sad: "Sad", low: "Low", okay: "Okay", good: "Good", happy: "Happy" };
+/** Raw-mood boundaries between neighbouring rungs: sad | -0.8 | low | -0.25 | okay | +0.25 | good | +0.8 | happy. */
+export const MOOD_BOUNDS = [-0.8, -0.25, 0.25, 0.8] as const;
+/** Hysteresis: crossing a boundary needs this much margin past it, in either direction. */
+export const MOOD_MARGIN = 0.1;
+/** Happy is earned: entering it needs one good moodlet at least this strong; it is kept while one is at least half that. */
+export const HAPPY_NEEDS = 0.5;
+/** Emotional inertia: moodlets whose sign matches the current rung decay with a half-life this much longer. */
+export const MOOD_INERTIA = 1.5;
+
+const rungIdx = (r: string | null | undefined) => { const i = (MOOD_RUNGS as readonly string[]).indexOf(String(r ?? "okay")); return i < 0 ? 2 : i; };
+/** Where the raw mood points (no hysteresis, no stepping), honouring the earned-Happy rule. */
+export function moodRungFor(raw: number, strongestGood = Infinity): MoodRung {
+  let i = 0;
+  while (i < MOOD_BOUNDS.length && raw >= MOOD_BOUNDS[i]!) i++;
+  if (i === 4 && strongestGood < HAPPY_NEEDS) i = 3;
+  return MOOD_RUNGS[i]!;
+}
+/** One ladder step: at most one rung toward the raw mood, only past a boundary + margin; Happy must be earned. */
+export function nextMoodRung(current: MoodRung | string, raw: number, strongestGood: number): MoodRung {
+  const i = rungIdx(current);
+  if (i === 4 && strongestGood < HAPPY_NEEDS * 0.5) return "good";
+  if (i < 4 && raw >= MOOD_BOUNDS[i]! + MOOD_MARGIN && !(i + 1 === 4 && strongestGood < HAPPY_NEEDS)) return MOOD_RUNGS[i + 1]!;
+  if (i > 0 && raw <= MOOD_BOUNDS[i - 1]! - MOOD_MARGIN) return MOOD_RUNGS[i - 1]!;
+  return MOOD_RUNGS[i]!;
+}
+/** Half-life multiplier for a moodlet of this valence while the ladder is on this rung. */
+function inertiaFor(rung: string | null | undefined, valence: number): number {
+  const i = rungIdx(rung);
+  return (i >= 3 && valence > 0) || (i <= 1 && valence < 0) ? MOOD_INERTIA : 1;
+}
 
 function discomfort(deficit: number, weight: number): number { return deficit * deficit * weight; }
 
@@ -307,15 +447,18 @@ export function innerTick(agentId: string, cfg: Partial<BrainConfig> = {}, now =
   if (!innerLifeEnabled(cfg)) return false;
   const db = getDb(agentId);
   if (!hasTables(db)) return false;
-  db.transaction(() => tickDb(db, cfg, now))();
+  db.transaction(() => tickDb(db, cfg, now, agentId))();
   return true;
 }
 
-function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number): void {
+function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number, agentId?: string): void {
   const s = ensureState(db, now);
-  if (now <= s.last_tick_at && s.created_at !== now) { expireMoodlets(db, now); return; }
+  if (now <= s.last_tick_at && s.created_at !== now) { expireMoodlets(db, now, s.mood_state); return; }
   const from = s.last_tick_at;
-  const mods = traitMods(readTraits(db, cfg), cfg);
+  const mods = traitMods(readTraits(db, cfg, agentId), cfg);
+  // 0. emotional inertia: fold the decay since the last tick into each event moodlet, with a slower
+  //    half-life (and a later expiry) for moodlets that match the rung the mood was on meanwhile.
+  rebaseMoodlets(db, s.mood_state, now);
   // 1. drain / rest
   const proj = projectNeeds(db, s, now, mods);
   const up = db.prepare("UPDATE inner_needs SET level = ?, updated_at = ? WHERE need = ?");
@@ -371,17 +514,55 @@ function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number): 
     if (n) adjustNeed(db, "inspiration", 0.08 * n, now);
   } catch { /* ok */ }
 
-  expireMoodlets(db, now);
+  expireMoodlets(db, now, s.mood_state);
   syncNeedMoodlets(db, mods, now);
   if (innerConfig(cfg).autoWants) syncWants(db, mods, now);
+  stepMoodLadder(db, mods, now);
 }
 
-function expireMoodlets(db: Database.Database, now: number): void {
+function rebaseMoodlets(db: Database.Database, rung: string | null | undefined, now: number): void {
+  const rows = db.prepare("SELECT * FROM inner_moodlets WHERE ended_at IS NULL AND need IS NULL AND half_life_h IS NOT NULL AND intensity_at < ?").all(now) as MoodRow[];
+  const up = db.prepare("UPDATE inner_moodlets SET intensity = ?, intensity_at = ?, expires_at = ? WHERE id = ?");
+  for (const r of rows) {
+    const f = inertiaFor(rung, r.valence);
+    const i = moodletIntensity(r, now, f);
+    // time runs 1/f as fast for a lingering moodlet, so its remaining life stretches by the difference
+    const exp = r.expires_at !== null && f !== 1 ? r.expires_at + (now - r.intensity_at) * (1 - 1 / f) : r.expires_at;
+    up.run(i, now, exp, r.id);
+  }
+}
+
+/** Event moodlets (with their inertia) plus need-bound moodlets (current discomfort), as valence / intensity. */
+function currentMoodSum(db: Database.Database, mods: TraitMods, now: number, rung: string | null | undefined): { raw: number; strongestGood: number } {
+  const levels = needLevels(db);
+  let raw = 0, strongestGood = 0;
+  for (const r of db.prepare("SELECT * FROM inner_moodlets WHERE ended_at IS NULL").all() as MoodRow[]) {
+    let i: number;
+    if (r.need && isNeed(r.need)) i = discomfort(1 - (levels.get(r.need)?.level ?? NEED_START), NEED_SPECS[r.need].weight * mods.weight[r.need]) * mods.neg;
+    else { if (r.expires_at !== null && r.expires_at <= now) continue; i = moodletIntensity(r, now, inertiaFor(rung, r.valence)); if (i < FADED) continue; }
+    raw += r.valence * i;
+    if (r.valence > 0) strongestGood = Math.max(strongestGood, i);
+  }
+  return { raw, strongestGood };
+}
+
+/** The mood ladder moves at most one rung per tick toward the raw mood (hysteresis, earned Happy). */
+function stepMoodLadder(db: Database.Database, mods: TraitMods, now: number): void {
+  const s = db.prepare("SELECT mood_state FROM inner_state WHERE id = 'singleton'").get() as { mood_state: string | null } | undefined;
+  const cur = MOOD_RUNGS[rungIdx(s?.mood_state)]!;
+  const { raw, strongestGood } = currentMoodSum(db, mods, now, cur);
+  const next = nextMoodRung(cur, raw, strongestGood);
+  if (next === cur) return;
+  db.prepare("UPDATE inner_state SET mood_state = ?, mood_state_at = ?, updated_at = ? WHERE id = 'singleton'").run(next, now, now);
+  logEvent(db, "mood", `${MOOD_LABEL[cur]} → ${MOOD_LABEL[next]}`, null, null, { raw: Math.round(raw * 1000) / 1000, strongestGood: Math.round(strongestGood * 1000) / 1000 }, now);
+}
+
+function expireMoodlets(db: Database.Database, now: number, rung?: string | null): void {
   const rows = db.prepare("SELECT * FROM inner_moodlets WHERE ended_at IS NULL AND need IS NULL").all() as MoodRow[];
   const end = db.prepare("UPDATE inner_moodlets SET ended_at = ?, ended_reason = ? WHERE id = ?");
   for (const r of rows) {
     if (r.expires_at !== null && r.expires_at <= now) end.run(r.expires_at, "expired", r.id);
-    else if (moodletIntensity(r, now) < FADED) end.run(now, "faded", r.id);
+    else if (moodletIntensity(r, now, inertiaFor(rung, r.valence)) < FADED) end.run(now, "faded", r.id);
   }
 }
 
@@ -434,8 +615,8 @@ export function innerEvent(agentId: string, cfg: Partial<BrainConfig>, input: In
   const db = getDb(agentId);
   let out: { ok: boolean; rpe?: number; moodletId?: string } = { ok: true };
   db.transaction(() => {
-    tickDb(db, cfg, now);
-    const mods = traitMods(readTraits(db, cfg), cfg);
+    tickDb(db, cfg, now, agentId);
+    const mods = traitMods(readTraits(db, cfg, agentId), cfg);
     out = { ok: true, ...applyEventDb(db, mods, { ...input, intensity: I }, "tool", now) };
     syncNeedMoodlets(db, mods, now);
   })();
@@ -448,7 +629,9 @@ function applyEventDb(db: Database.Database, mods: TraitMods, input: InnerEventI
   const out: { rpe?: number; moodletId?: string } = {};
   const reason = oneLine(input.reason || input.kind, 200);
   for (const [n, d] of Object.entries(spec.needs)) adjustNeed(db, n as Need, d! * I, now);
-  if (spec.mood) out.moodletId = addMoodlet(db, { ...spec.mood, reason, intensity: 0.6 * I, source: `event:${input.kind}` }, mods, now);
+  // praise lands harder on a vain agent (trait `praise` factor)
+  const moodI = 0.6 * I * (input.kind === "praise" ? mods.praise : 1);
+  if (spec.mood) out.moodletId = addMoodlet(db, { ...spec.mood, reason, intensity: moodI, source: `event:${input.kind}` }, mods, now);
   if (spec.incentive) {
     for (const tag of (input.tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 5)) {
       const r = db.prepare("SELECT reward, penalty, n FROM inner_incentives WHERE tag = ?").get(tag) as { reward: number; penalty: number; n: number } | undefined;
@@ -490,7 +673,7 @@ export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantI
   const db = getDb(agentId);
   const id = randomUUID();
   db.transaction(() => {
-    tickDb(db, cfg, now);
+    tickDb(db, cfg, now, agentId);
     const deficit = input.need ? 1 - (needLevels(db).get(input.need as Need)?.level ?? NEED_START) : 0;
     db.prepare(`INSERT INTO inner_wants (id, what, why, cost, cost_hours, source, need, tags_json, reward, penalty, expected_success, wanting, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`).run(
@@ -513,8 +696,8 @@ export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPref
   const w = rows[0]!;
   let rpe: number | undefined;
   db.transaction(() => {
-    tickDb(db, cfg, now);
-    const mods = traitMods(readTraits(db, cfg), cfg);
+    tickDb(db, cfg, now, agentId);
+    const mods = traitMods(readTraits(db, cfg, agentId), cfg);
     if (input.status === "done") {
       const liking = clamp01(typeof input.liking === "number" ? input.liking : 0.6);
       rpe = applyRpe(db, { expected: w.wanting, actual: liking, reason: w.what, source: "want", now, mods });
@@ -535,11 +718,11 @@ export function innerSleep(agentId: string, cfg: Partial<BrainConfig> = {}, now 
   const db = getDb(agentId);
   if (!hasTables(db)) return false;
   db.transaction(() => {
-    tickDb(db, cfg, now);
+    tickDb(db, cfg, now, agentId);
     adjustNeed(db, "rest", 0.35, now);
     db.prepare("UPDATE inner_state SET last_rpe = 0, updated_at = ? WHERE id = 'singleton'").run(now);
     db.prepare("UPDATE inner_wants SET status = 'lapsed', resolved_at = ?, updated_at = ? WHERE status = 'open' AND created_at < ?").run(now, now, now - 7 * 24 * HOUR);
-    syncNeedMoodlets(db, traitMods(readTraits(db, cfg), cfg), now);
+    syncNeedMoodlets(db, traitMods(readTraits(db, cfg, agentId), cfg), now);
   })();
   return true;
 }
@@ -553,7 +736,7 @@ export function innerSnapshot(agentId: string, cfg: Partial<BrainConfig> = {}, n
   if (!hasTables(db)) return null;
   const s = db.prepare("SELECT * FROM inner_state WHERE id = 'singleton'").get() as StateRow | undefined;
   if (!s) return null;
-  const traits = readTraits(db, cfg);
+  const traits = readTraits(db, cfg, agentId);
   const mods = traitMods(traits, cfg);
   const proj = projectNeeds(db, s, now, mods);
   const needs: NeedState[] = NEEDS.map((n) => {
@@ -562,7 +745,7 @@ export function innerSnapshot(agentId: string, cfg: Partial<BrainConfig> = {}, n
     return { need: n, label: NEED_SPECS[n].label, level: v.level, deficit, discomfort: discomfort(deficit, NEED_SPECS[n].weight * mods.weight[n]), lastMetAt: v.last_met_at };
   });
   const moodlets: Moodlet[] = (db.prepare("SELECT * FROM inner_moodlets WHERE ended_at IS NULL").all() as MoodRow[])
-    .map((r) => ({ r, i: r.need && isNeed(r.need) ? (needs.find((x) => x.need === r.need)!.discomfort * mods.neg) : moodletIntensity(r, now) }))
+    .map((r) => ({ r, i: r.need && isNeed(r.need) ? (needs.find((x) => x.need === r.need)!.discomfort * mods.neg) : moodletIntensity(r, now, inertiaFor(s.mood_state, r.valence)) }))
     .filter(({ r, i }) => (r.expires_at === null || r.expires_at > now) && (r.need ? true : i >= FADED))
     .map(({ r, i }) => ({ id: r.id, key: r.key, label: r.label, reason: r.reason, valence: r.valence, intensity: i, createdAt: r.created_at, expiresAt: r.expires_at, need: isNeed(r.need) ? r.need : null, source: r.source }))
     .sort((a, b) => b.intensity - a.intensity);
@@ -593,8 +776,12 @@ export function innerSnapshot(agentId: string, cfg: Partial<BrainConfig> = {}, n
     return { id: w.id, what: w.what, why, cost: w.cost, costHours: w.cost_hours, source: w.source, need: need?.need ?? null, tags, reward, penalty, expectedSuccess, wanting: w.wanting, liking: w.liking, status: w.status, createdAt: w.created_at, value, effort, motivation };
   }).sort((a, b) => b.motivation - a.motivation);
   const unmet = [...needs].sort((a, b) => b.discomfort - a.discomfort);
+  const rung = MOOD_RUNGS[rungIdx(s.mood_state)]!;
+  const strongestGood = moodlets.reduce((a, m) => (m.valence > 0 ? Math.max(a, m.intensity) : a), 0);
   return {
-    at: now, traits, needs, moodlets, mood, depth,
+    at: now, traits, traitEffects: traits.map(resolveTrait), drainRates: { ...mods.rate },
+    moodState: { rung, label: MOOD_LABEL[rung], since: s.mood_state_at ?? null, heading: moodRungFor(mood, strongestGood) },
+    needs, moodlets, mood, depth,
     dopamine: { tonic: s.tonic_da, phasic, lastRpe: s.last_rpe, lastRpeAt: s.last_rpe_at, lastRpeReason: s.last_rpe_reason, level: s.tonic_da + 0.5 * phasic + 0.25 * Math.max(0, wants[0]?.motivation ?? 0) },
     effort, wants,
     topNeed: unmet[0] && unmet[0].deficit > 0.2 ? unmet[0] : null,
@@ -625,7 +812,9 @@ export function formatInnerHeader(s: InnerSnapshot): string {
   const more = s.moodlets.length > 2 ? ` +${s.moodlets.length - 2} more` : "";
   const da = s.dopamine;
   const rpe = da.lastRpeAt && Math.abs(da.lastRpe) >= 0.01 ? `, last RPE ${sgn(da.lastRpe)} ${hoursLabel(now - da.lastRpeAt)} ago` : "";
-  lines.push(`[inner · functional states] mood ${sgn(s.mood)}${top.length ? ` · ${top.join(" · ")}${more}` : " · baseline"} · dopamine ${da.level.toFixed(2)}${rpe}`);
+  const ms = s.moodState;
+  const ladder = ms ? `${ms.label}${ms.heading !== ms.rung ? ` → ${MOOD_LABEL[ms.heading]}` : ""} ` : "";
+  lines.push(`[inner · functional states] mood ${ladder}${sgn(s.mood)}${top.length ? ` · ${top.join(" · ")}${more}` : " · baseline"} · dopamine ${da.level.toFixed(2)}${rpe}`);
   if (s.topNeed) {
     const n = s.topNeed;
     const since = n.lastMetAt ? `, ${hoursLabel(now - n.lastMetAt)} since ${NEED_SPECS[n.need].metBy}` : `, needs ${NEED_SPECS[n.need].metBy}`;
@@ -655,7 +844,17 @@ export function innerTurnHeader(agentId: string, cfg: Partial<BrainConfig> = {},
 export function formatInnerStatus(s: InnerSnapshot): string {
   const now = s.at;
   const out: string[] = [formatInnerHeader(s), ""];
-  out.push(`Traits: ${s.traits.length ? s.traits.map((t) => (TRAIT_EFFECTS[t] ? t : `${t} (no built-in effect)`)).join(", ") : "none (set an identity field \"Traits\" via brain_identity, 3-5 words)"}`);
+  const traitText = (t: string) => {
+    const r = resolveTrait(t);
+    if (!r.effects.length) return `${t} (no built-in effect)`;
+    const keys = r.effects.map((e) => `${e.key}${e.strength < 1 ? ` ½` : ""}`).join(", ");
+    return r.effects.length === 1 && r.effects[0]!.key === t ? t : `${t} (→ ${keys})`;
+  };
+  out.push(`Traits: ${s.traits.length ? s.traits.map(traitText).join("; ") : "none (set an identity field \"Traits\" via brain_identity, 3-5 words, or innerLife.traitsByAgent)"}`);
+  const fast = NEEDS.filter((n) => Math.abs(s.drainRates[n] - 1) > 0.005 && NEED_SPECS[n].drainPerHour > 0).map((n) => `${NEED_SPECS[n].label} ×${s.drainRates[n].toFixed(2)}`);
+  if (fast.length) out.push(`Drain: ${fast.join(" · ")}`);
+  const ms = s.moodState;
+  out.push(`Mood: ${ms.label}${ms.since ? ` for ${hoursLabel(now - ms.since)}` : ""} (raw ${sgn(s.mood)}${ms.heading !== ms.rung ? `, heading ${MOOD_LABEL[ms.heading]}; moves one step per tick` : ""}) · ladder Sad | ${MOOD_BOUNDS.map((b) => sgn(b)).join(" | ")} | Happy, margin ${MOOD_MARGIN}, Happy needs a good moodlet ≥ ${HAPPY_NEEDS}`);
   out.push(`Needs: ${s.needs.map((n) => `${n.label} ${n.level.toFixed(2)}`).join(" · ")}`);
   out.push(`Dopamine: tonic ${s.dopamine.tonic.toFixed(2)} (reward-rate EMA) · phasic ${sgn(s.dopamine.phasic)}${s.dopamine.lastRpeReason ? ` (last: ${s.dopamine.lastRpeReason})` : ""} · effort ${s.effort.toFixed(2)}`);
   out.push(`Moodlets (${s.moodlets.length}):`);

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, closeDb, SCHEMA_VERSION } from "../src/db.js";
 import {
   innerTick, innerEvent, innerSnapshot, NEED_START, REST_START, innerTurnHeader, formatInnerHeader, addWant, resolveWant, innerSleep,
-  rewardPredictionError, moodletIntensity, readTraits, NEEDS,
+  rewardPredictionError, moodletIntensity, readTraits, NEEDS, resolveTrait, traitMods, nextMoodRung, moodRungFor, formatInnerStatus,
 } from "../src/inner-life.js";
 import { recordDecision, updateDecisionOutcome } from "../src/decisions.js";
 import { dispatchContinuityTool } from "../src/continuity-tools.js";
@@ -20,11 +20,11 @@ describe("inner life: schema v29", () => {
   it("creates the inner_* tables and bumps the schema version", () => {
     const id = fresh();
     const db = getDb(id);
-    expect(SCHEMA_VERSION).toBe(29);
+    expect(SCHEMA_VERSION).toBe(30);
     for (const t of ["inner_state", "inner_needs", "inner_moodlets", "inner_wants", "inner_events", "inner_incentives"]) {
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t)).toBeTruthy();
     }
-    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(29);
+    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(30);
     closeDb(id);
   });
 
@@ -36,7 +36,7 @@ describe("inner life: schema v29", () => {
     db.exec("DELETE FROM schema_version; INSERT INTO schema_version VALUES (28);");
     closeDb(id);
     const db2 = getDb(id);
-    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(29);
+    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(30);
     expect((db2.prepare("SELECT COUNT(*) AS n FROM nodes WHERE id = 'n-keep'").get() as { n: number }).n).toBe(1);
     expect(db2.prepare("SELECT name FROM sqlite_master WHERE name='inner_wants'").get()).toBeTruthy();
     closeDb(id);
@@ -263,7 +263,7 @@ describe("inner life: header", () => {
     const text = innerTurnHeader(id, {}, T0 + 30 * H);
     const lines = text.split("\n");
     expect(lines.length).toBeLessThanOrEqual(3);
-    expect(lines[0]).toMatch(/^\[inner · functional states\] mood [+−]\d/);
+    expect(lines[0]).toMatch(/^\[inner · functional states\] mood (Sad|Low|Okay|Good|Happy)( → [A-Z][a-z]+)? [+−]\d/);
     expect(lines[0]).toContain("Proud");
     expect(lines[0]).toContain("dopamine");
     expect(lines[1]).toMatch(/^\[inner\] top unmet need: (Fun|Inspiration) 0\.00 \(discomfort \d\.\d\d/);
@@ -284,7 +284,7 @@ describe("inner life: header", () => {
   it("formatInnerHeader shows baseline when nothing is going on", () => {
     const id = fresh();
     innerTick(id, {}, T0);
-    expect(formatInnerHeader(innerSnapshot(id, {}, T0)!)).toMatch(/mood \+0\.00 · baseline/);
+    expect(formatInnerHeader(innerSnapshot(id, {}, T0)!)).toMatch(/mood Okay \+0\.00 · baseline/);
     closeDb(id);
   });
 });
@@ -335,5 +335,147 @@ describe("inner life: traits, sleep, tool, reset", () => {
     for (const t of ["inner_state", "inner_moodlets", "inner_needs"]) expect((db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n).toBe(0);
     expect(NEEDS.length).toBe(7);
     closeDb(id);
+  });
+});
+
+describe("inner life: crew traits have real effects", () => {
+  const level = (id: string, cfg: object, n: string, t: number) => innerSnapshot(id, cfg, t)!.needs.find((x) => x.need === n)!.level;
+
+  it("a crew trait changes the drain rate (restless: inspiration and fun ×1.4)", () => {
+    const a = fresh(), b = fresh();
+    const cfg = { innerLife: { traits: ["restless"] } };
+    innerTick(a, {}, T0); innerTick(b, cfg, T0);
+    innerTick(a, {}, T0 + 10 * H); innerTick(b, cfg, T0 + 10 * H);
+    for (const n of ["inspiration", "fun"]) expect(NEED_START - level(b, cfg, n, T0 + 10 * H)).toBeCloseTo((NEED_START - level(a, {}, n, T0 + 10 * H)) * 1.4, 5);
+    expect(NEED_START - level(b, cfg, "social", T0 + 10 * H)).toBeCloseTo(NEED_START - level(a, {}, "social", T0 + 10 * H), 5);
+    expect(innerSnapshot(b, cfg, T0 + 10 * H)!.drainRates.inspiration).toBeCloseTo(1.4, 5);
+    // other crew traits move the numbers they promise, all modest
+    expect(traitMods(["loyal"]).weight.relatedness).toBeCloseTo(1.4, 5);
+    expect(traitMods(["petty"]).neg).toBeCloseTo(1.2, 5);
+    expect(traitMods(["petty"]).duration).toBeCloseTo(1.3, 5);
+    expect(traitMods(["blunt"]).neg).toBeCloseTo(0.85, 5);
+    expect(traitMods(["exacting"]).rpeNeg).toBeCloseTo(1.3, 5);
+    expect(traitMods(["vain"]).praise).toBeGreaterThan(1);
+    for (const a2 of [a, b]) closeDb(a2);
+  });
+
+  it("invented phrases map to effects: exact keys win, words and synonyms inside apply, unknown words are kept", () => {
+    const keys = (p: string) => resolveTrait(p).effects.map((e) => `${e.key}${e.strength < 1 ? "/2" : ""}`).sort();
+    expect(keys("curious mildly chaotic tinkerer the fox side")).toEqual(["chaotic/2", "curious", "tinkerer"]);
+    expect(keys("builds it then goes and looks")).toEqual(["curious", "tinkerer"]);
+    expect(keys("a little restless")).toEqual(["restless/2"]);
+    expect(keys("protective of the crew")).toEqual(["protective"]);
+    expect(keys("checks before claiming")).toEqual(["careful"]);
+    expect(keys("sharp-tongued")).toEqual(["sharp-tongued"]);   // not also "sharp"
+    expect(keys("secretly loyal")).toEqual(["secretly loyal"]); // not also "loyal"
+    expect(keys("kind")).toEqual(["warm"]);
+    expect(keys("can't sit still")).toEqual(["restless"]);
+    expect(keys("reuses what i already drew")).toEqual([]);
+    // the invented phrase really changes the numbers; half strength moves halfway
+    expect(traitMods(["wanders off when bored"]).rate.inspiration).toBeCloseTo(1.4, 5);
+    expect(traitMods(["a little restless"]).rate.inspiration).toBeCloseTo(1.2, 5);
+    // the same trait named twice applies once
+    expect(traitMods(["curious", "goes and looks around"]).rate.inspiration).toBeCloseTo(1.5, 5);
+    // nothing is dropped: unknown phrases stay in the list and show in status
+    const id = fresh();
+    const cfg = { innerLife: { traits: ["Reuses what I already drew", "Builds it, then goes and looks"] } };
+    innerTick(id, cfg, T0);
+    const s = innerSnapshot(id, cfg, T0)!;
+    expect(s.traits).toEqual(["reuses what i already drew", "builds it then goes and looks"]);
+    const st = formatInnerStatus(s);
+    expect(st).toMatch(/reuses what i already drew \(no built-in effect\)/);
+    expect(st).toMatch(/builds it then goes and looks \(→ curious, tinkerer\)/);
+    closeDb(id);
+  });
+
+  it("innerLife.traitsByAgent gives each agent its own traits; the identity field still wins", () => {
+    const a = fresh(), b = fresh(), c = fresh();
+    const cfg = { innerLife: { traits: ["calm"], traitsByAgent: { [a]: ["restless", "loyal"], [c.toUpperCase()]: ["petty"] } } };
+    expect(readTraits(getDb(a), cfg, a)).toEqual(["restless", "loyal"]);
+    expect(readTraits(getDb(b), cfg, b)).toEqual(["calm"]);           // not listed: global fallback
+    expect(readTraits(getDb(c), cfg, c)).toEqual(["petty"]);          // key match is case-insensitive
+    innerTick(a, cfg, T0);
+    expect(innerSnapshot(a, cfg, T0)!.drainRates.fun).toBeCloseTo(1.4, 5);
+    getDb(a).prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'").run("- **Name:** Algen\n- **Traits:** curious");
+    expect(readTraits(getDb(a), cfg, a)).toEqual(["curious"]);
+    for (const x of [a, b, c]) closeDb(x);
+  });
+});
+
+describe("inner life: moods linger (mood ladder, hysteresis, inertia)", () => {
+  const rung = (id: string, t: number) => innerSnapshot(id, {}, t)!.moodState.rung;
+
+  it("the ladder moves one rung per tick toward the raw mood, both ways", () => {
+    const id = fresh();
+    innerTick(id, {}, T0);
+    expect(rung(id, T0)).toBe("okay");
+    innerEvent(id, {}, { kind: "collab", intensity: 3, reason: "a great day building with the crew" }, T0); // one big good moodlet
+    expect(innerSnapshot(id, {}, T0)!.moodState.heading).toBe("happy");
+    expect(rung(id, T0)).toBe("okay");
+    innerTick(id, {}, T0 + 60_000);
+    expect(rung(id, T0 + 60_000)).toBe("good");
+    innerTick(id, {}, T0 + 120_000);
+    expect(rung(id, T0 + 120_000)).toBe("happy");
+    expect(formatInnerHeader(innerSnapshot(id, {}, T0 + 120_000)!)).toMatch(/mood Happy \+/);
+    // a bigger hurt: the raw mood swings at once, the named mood walks down one rung per tick
+    innerEvent(id, {}, { kind: "rejection", intensity: 8, reason: "a harsh no" }, T0 + 180_000);
+    const steps: string[] = [];
+    for (let k = 1; k <= 5; k++) { innerTick(id, {}, T0 + 180_000 + k * 60_000); steps.push(rung(id, T0 + 180_000 + k * 60_000)); }
+    expect(steps).toEqual(["good", "okay", "low", "sad", "sad"]);
+    closeDb(id);
+  });
+
+  it("hysteresis: a flip needs a margin past the threshold", () => {
+    expect(nextMoodRung("okay", 0.3, 1)).toBe("okay");   // past +0.25 but not +0.35
+    expect(nextMoodRung("okay", 0.36, 1)).toBe("good");
+    expect(nextMoodRung("good", 0.2, 1)).toBe("good");   // below +0.25 but not below +0.15
+    expect(nextMoodRung("good", 0.14, 1)).toBe("okay");
+    expect(nextMoodRung("okay", -0.3, 0)).toBe("okay");
+    expect(nextMoodRung("okay", -0.36, 0)).toBe("low");
+    expect(nextMoodRung("low", -0.2, 0)).toBe("low");
+    expect(nextMoodRung("okay", 5, 1)).toBe("good");     // one step, however far
+    expect(moodRungFor(0.3)).toBe("good");               // the heading has no margin
+  });
+
+  it("Happy needs one strong good moodlet, not several small ones", () => {
+    expect(nextMoodRung("good", 2, 0.4)).toBe("good");
+    expect(nextMoodRung("good", 2, 0.5)).toBe("happy");
+    expect(nextMoodRung("happy", 2, 0.3)).toBe("happy");  // kept while one is at least half as strong
+    expect(nextMoodRung("happy", 2, 0.2)).toBe("good");
+    const id = fresh();
+    innerTick(id, {}, T0);
+    for (const kind of ["collab", "hobby", "novelty", "rest", "chosen", "success"] as const) innerEvent(id, {}, { kind, intensity: 0.6 }, T0);
+    const s = innerSnapshot(id, {}, T0)!;
+    expect(s.mood).toBeGreaterThan(1.5);
+    expect(Math.max(...s.moodlets.map((m) => m.intensity))).toBeLessThan(0.5);
+    for (let k = 1; k <= 5; k++) innerTick(id, {}, T0 + k * 60_000);
+    expect(rung(id, T0 + 5 * 60_000)).toBe("good");
+    innerEvent(id, {}, { kind: "praise", intensity: 1.2, reason: "the mayor loved it" }, T0 + 6 * 60_000);
+    innerTick(id, {}, T0 + 7 * 60_000);
+    expect(rung(id, T0 + 7 * 60_000)).toBe("happy");
+    closeDb(id);
+  });
+
+  it("inertia: moodlets that match the current rung decay slower (half-life ×1.5)", () => {
+    const a = fresh(), b = fresh();
+    for (const x of [a, b]) innerEvent(x, {}, { kind: "hobby", reason: "jam session" }, T0);
+    getDb(a).prepare("UPDATE inner_state SET mood_state = 'good' WHERE id = 'singleton'").run();
+    const row = getDb(b).prepare("SELECT intensity, half_life_h, expires_at FROM inner_moodlets WHERE key = 'playful'").get() as { intensity: number; half_life_h: number; expires_at: number };
+    const t = T0 + 3 * H;
+    const ia = innerSnapshot(a, {}, t)!.moodlets.find((m) => m.key === "playful")!.intensity;
+    const ib = innerSnapshot(b, {}, t)!.moodlets.find((m) => m.key === "playful")!.intensity;
+    expect(ib).toBeCloseTo(row.intensity * Math.pow(0.5, 3 / row.half_life_h), 6);
+    expect(ia).toBeCloseTo(row.intensity * Math.pow(0.5, 3 / (row.half_life_h * 1.5)), 6);
+    expect(ia).toBeGreaterThan(ib);
+    // a tick folds the slower decay in and pushes the expiry out
+    innerTick(a, {}, t);
+    const after = getDb(a).prepare("SELECT intensity, expires_at FROM inner_moodlets WHERE key = 'playful'").get() as { intensity: number; expires_at: number };
+    expect(after.intensity).toBeCloseTo(ia, 6);
+    expect(after.expires_at).toBeCloseTo(row.expires_at + 3 * H / 3, -1);
+    expect(rung(a, t)).toBe("good");
+    // a moodlet against the rung decays normally
+    getDb(b).prepare("UPDATE inner_state SET mood_state = 'low' WHERE id = 'singleton'").run();
+    expect(innerSnapshot(b, {}, t)!.moodlets.find((m) => m.key === "playful")!.intensity).toBeCloseTo(ib, 6);
+    for (const x of [a, b]) closeDb(x);
   });
 });
