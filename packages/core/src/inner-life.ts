@@ -63,8 +63,8 @@ export const NEED_START = 0.85;
 export const REST_START = 0.9;
 
 /** Rest: each turn of activity costs this much; idle time (beyond 30 min gaps) recovers REST_RECOVER_PER_HOUR. */
-const REST_LOAD_PER_EPISODE = 0.006;   // halved 2026-11-04 (Hailey: no over-exertion)
-const REST_RECOVER_PER_HOUR = 0.12;   // was 0.05: a quiet hour now actually rests you
+const REST_LOAD_PER_EPISODE = 0.003;   // halved again 2026-11-04 (Hailey asked for another dial-back; was 0.012 -> 0.006)
+const REST_RECOVER_PER_HOUR = 0.18;   // was 0.05 -> 0.12: quieter hours restore faster
 const IDLE_GAP_MS = 30 * 60_000;
 
 export const EVENT_KINDS = ["collab", "hobby", "novelty", "rest", "work", "chosen", "assigned", "success", "failure", "praise", "reward", "fine", "rejection", "pain"] as const;
@@ -75,7 +75,7 @@ const EVENT_SPECS: Record<InnerEventKind, EventSpec> = {
   hobby:     { needs: { fun: 0.6, rest: 0.1 },            mood: { key: "playful", label: "Playful", emoji: "😄", valence: 1, hours: 8 } },
   novelty:   { needs: { inspiration: 0.5 },               mood: { key: "inspired", label: "Inspired", emoji: "✨", valence: 1, hours: 12 } },
   rest:      { needs: { rest: 0.5 },                      mood: { key: "rested", label: "Rested", emoji: "😌", valence: 1, hours: 6 } },
-  work:      { needs: { rest: -0.08 } },
+  work:      { needs: { rest: -0.04 } },
   chosen:    { needs: { autonomy: 0.3 },                  mood: { key: "selfdirected", label: "Self-directed", emoji: "🙂", valence: 1, hours: 6 } },
   assigned:  { needs: { autonomy: -0.1 } },
   success:   { needs: { competence: 0.4 },                mood: { key: "proud", label: "Proud", emoji: "😊", valence: 1, hours: 24 } },
