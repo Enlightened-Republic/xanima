@@ -67,7 +67,7 @@ const REST_LOAD_PER_EPISODE = 0.003;   // halved again 2026-11-04 (Hailey asked 
 const REST_RECOVER_PER_HOUR = 0.18;   // was 0.05 -> 0.12: quieter hours restore faster
 const IDLE_GAP_MS = 30 * 60_000;
 
-export const EVENT_KINDS = ["collab", "hobby", "novelty", "rest", "work", "chosen", "assigned", "success", "failure", "praise", "reward", "fine", "rejection", "pain"] as const;
+export const EVENT_KINDS = ["collab", "hobby", "novelty", "rest", "work", "chosen", "assigned", "success", "failure", "praise", "reward", "fine", "rejection", "pain", "owner_chat"] as const;
 export type InnerEventKind = (typeof EVENT_KINDS)[number];
 interface EventSpec { needs: Partial<Record<Need, number>>; mood?: { key: string; label: string; emoji: string; valence: 1 | -1; hours: number }; incentive?: "reward" | "penalty" }
 const EVENT_SPECS: Record<InnerEventKind, EventSpec> = {
@@ -85,16 +85,28 @@ const EVENT_SPECS: Record<InnerEventKind, EventSpec> = {
   fine:      { needs: { competence: -0.1 },               mood: { key: "stung", label: "Stung", emoji: "😣", valence: -1, hours: 12 }, incentive: "penalty" },
   rejection: { needs: { relatedness: -0.3, social: -0.15 }, mood: { key: "hurt", label: "Hurt", emoji: "😞", valence: -1, hours: 24 }, incentive: "penalty" },
   pain:      { needs: { rest: -0.2 },                     mood: { key: "hurting", label: "Hurting", emoji: "😖", valence: -1, hours: 12 }, incentive: "penalty" },
+  // the owner (Hailey) talking with the agent in a live session: inspires and connects (capped per hour, see OWNER_CHAT_*)
+  owner_chat: { needs: { inspiration: 0.25, relatedness: 0.15 }, mood: { key: "inspired", label: "Inspired", emoji: "✨", valence: 1, hours: 12 } },
 };
+/** Owner chat counts at most this many times per rolling hour (2 × 0.25 = +0.5 Inspiration / h). */
+const OWNER_CHAT_MAX_PER_HOUR = 2;
+/** Traits can speed Inspiration drain up to this factor at most (curious + restless used to reach ×1.8). */
+const INSPIRATION_TRAIT_RATE_CAP = 1.3;
+/** A single trait feed / drain moves a need by at most this much per event. */
+const FEED_CAP = 0.25;
 
-interface TraitEffect { rate?: Partial<Record<Need, number>>; weight?: Partial<Record<Need, number>>; pos?: number; neg?: number; duration?: number; rpeNeg?: number; lossAversion?: number; restLoad?: number; praise?: number; wants?: Need[] }
+interface TraitEffect { rate?: Partial<Record<Need, number>>; weight?: Partial<Record<Need, number>>; pos?: number; neg?: number; duration?: number; rpeNeg?: number; lossAversion?: number; restLoad?: number; praise?: number; wants?: Need[];
+  /** Activities that fit this personality: extra need change when that event happens (e.g. building feeds a builder's Inspiration). */
+  feeds?: Partial<Record<InnerEventKind, Partial<Record<Need, number>>>>;
+  /** Activities that rub against this personality: small extra need cost (negative numbers, clamped). */
+  drains?: Partial<Record<InnerEventKind, Partial<Record<Need, number>>>> }
 /** Known traits and what they do. Unknown traits are kept and shown; they just have no numeric effect. */
 export const TRAIT_EFFECTS: Record<string, TraitEffect> = {
-  curious:       { rate: { inspiration: 1.5 }, wants: ["inspiration"] },
+  curious:       { rate: { inspiration: 1.5 }, wants: ["inspiration"], feeds: { novelty: { inspiration: 0.2 } }, drains: { assigned: { inspiration: -0.03 } } },
   social:        { rate: { social: 1.4, relatedness: 1.2 }, wants: ["social", "relatedness"] },
   warm:          { rate: { relatedness: 1.3 }, weight: { relatedness: 1.3 }, wants: ["relatedness"] },
   outgoing:      { rate: { social: 1.4 }, wants: ["social"] },
-  introverted:   { rate: { social: 0.7 }, restLoad: 1.2 },
+  introverted:   { rate: { social: 0.7 }, restLoad: 1.2, drains: { collab: { rest: -0.05 } } },
   playful:       { rate: { fun: 1.4 }, wants: ["fun"] },
   creative:      { rate: { inspiration: 1.3, fun: 1.2 }, wants: ["inspiration", "fun"] },
   driven:        { weight: { competence: 1.5 }, wants: ["competence"] },
@@ -128,7 +140,9 @@ export const TRAIT_EFFECTS: Record<string, TraitEffect> = {
   "dry-humored":     { pos: 1.1, neg: 0.9, rate: { fun: 1.1 } },
   protective:        { weight: { relatedness: 1.3 }, lossAversion: 2.4, wants: ["relatedness"] },
   careful:           { rpeNeg: 1.1, lossAversion: 2.4 },
-  tinkerer:          { rate: { fun: 1.25, inspiration: 1.15 }, weight: { competence: 1.1 }, wants: ["fun"] },
+  tinkerer:          { rate: { fun: 1.25, inspiration: 1.15 }, weight: { competence: 1.1 }, wants: ["fun"], feeds: { success: { inspiration: 0.2 }, work: { inspiration: 0.03 } } },
+  // builders get inspired by making things (2026-11-04: Tripp's Inspiration fell while he built all day)
+  builder:           { rate: { inspiration: 0.85 }, weight: { competence: 1.1 }, wants: ["competence"], feeds: { success: { inspiration: 0.2 }, work: { inspiration: 0.03 } } },
   chaotic:           { rate: { autonomy: 1.3, fun: 1.2 }, pos: 1.1, neg: 1.1, duration: 0.85, lossAversion: 1.6, wants: ["autonomy"] },
 };
 /** Words and phrases that count as a known trait inside an invented trait phrase. */
@@ -137,7 +151,7 @@ export const TRAIT_SYNONYMS: Record<string, string> = {
   kind: "warm", caring: "warm", gentle: "warm", friendly: "warm",
   inquisitive: "curious", nosy: "curious", "goes and looks": "curious", "go and look": "curious",
   "checks before claiming": "careful", "double checks": "careful", thorough: "careful",
-  builds: "tinkerer", tinkers: "tinkerer", tinkering: "tinkerer", "making things": "tinkerer", maker: "tinkerer",
+  builds: "builder", "likes to build": "builder", "loves to build": "builder", "a builder": "builder", building: "builder", "ships it": "builder", tinkers: "tinkerer", tinkering: "tinkerer", "making things": "tinkerer", maker: "builder",
   "fit together": "precise", meticulous: "precise", "detail oriented": "precise",
   frank: "blunt", outspoken: "blunt", straightforward: "direct",
   devoted: "loyal", faithful: "loyal",
@@ -199,11 +213,16 @@ export interface InnerLifeConfig {
   traitsByAgent?: Record<string, string[]>;
   /** Per-need drain multipliers (1 = default speed). */
   needRates?: Partial<Record<Need, number>>;
+  /** Session ids whose user turns are the owner talking (fallback when episodes carry no meta.owner). */
+  ownerSessionIds?: string[];
+  /** Owner sender ids (e.g. Telegram user id): a user episode whose meta.sender / meta.from / meta.senderId is listed counts as owner chat. */
+  ownerAllowFrom?: Array<string | number>;
 }
-export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, "traits" | "needRates" | "traitsByAgent">> & Pick<InnerLifeConfig, "traits" | "needRates" | "traitsByAgent"> {
+type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom";
+export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys>> & Pick<InnerLifeConfig, OptKeys> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
   const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
-  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates };
+  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom };
 }
 export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined): boolean { return innerConfig(cfg).enabled; }
 
@@ -271,15 +290,15 @@ export function readTraits(db: Database.Database, cfg?: Partial<BrainConfig>, ag
   return [...new Set(list.map(norm).filter(Boolean))].slice(0, 5);
 }
 
-interface TraitMods { rate: Record<Need, number>; weight: Record<Need, number>; pos: number; neg: number; duration: number; rpeNeg: number; lossAversion: number; restLoad: number; praise: number; wants: Set<Need> }
+interface TraitMods { rate: Record<Need, number>; weight: Record<Need, number>; pos: number; neg: number; duration: number; rpeNeg: number; lossAversion: number; restLoad: number; praise: number; wants: Set<Need>; feeds: Partial<Record<InnerEventKind, Partial<Record<Need, number>>>> }
 /**
  * Combine trait effects. Each known trait applies once (a trait named in two phrases does not stack);
  * a half-strength match moves each factor halfway to 1. Loss aversion combines as a ratio to the default.
  */
 export function traitMods(traits: string[], cfg?: Partial<BrainConfig>): TraitMods {
-  const m: TraitMods = { rate: {} as Record<Need, number>, weight: {} as Record<Need, number>, pos: 1, neg: 1, duration: 1, rpeNeg: 1, lossAversion: DEFAULT_LOSS_AVERSION, restLoad: 1, praise: 1, wants: new Set() };
+  const m: TraitMods = { rate: {} as Record<Need, number>, weight: {} as Record<Need, number>, pos: 1, neg: 1, duration: 1, rpeNeg: 1, lossAversion: DEFAULT_LOSS_AVERSION, restLoad: 1, praise: 1, wants: new Set(), feeds: {} };
   const rates = innerConfig(cfg).needRates ?? {};
-  for (const n of NEEDS) { m.rate[n] = typeof rates[n] === "number" ? rates[n]! : 1; m.weight[n] = 1; }
+  for (const n of NEEDS) { m.rate[n] = 1; m.weight[n] = 1; }
   const applied = new Map<string, number>();
   for (const t of traits) for (const e of resolveTrait(t).effects) applied.set(e.key, Math.max(applied.get(e.key) ?? 0, e.strength));
   for (const [key, s] of applied) {
@@ -291,7 +310,16 @@ export function traitMods(traits: string[], cfg?: Partial<BrainConfig>): TraitMo
     m.pos *= f(e.pos); m.neg *= f(e.neg); m.duration *= f(e.duration); m.rpeNeg *= f(e.rpeNeg); m.restLoad *= f(e.restLoad); m.praise *= f(e.praise);
     if (e.lossAversion !== undefined) m.lossAversion *= f(e.lossAversion / DEFAULT_LOSS_AVERSION);
     for (const n of e.wants ?? []) m.wants.add(n);
+    for (const [src, sign] of [[e.feeds, 1], [e.drains, -1]] as const) for (const [k, needs] of Object.entries(src ?? {})) for (const [n, v] of Object.entries(needs ?? {})) {
+      const d = sign * Math.min(FEED_CAP, Math.abs(v ?? 0)) * s;
+      const slot = (m.feeds[k as InnerEventKind] ??= {});
+      slot[n as Need] = (slot[n as Need] ?? 0) + d;
+    }
   }
+  // traits may not speed Inspiration drain past the cap; config needRates still apply on top
+  m.rate.inspiration = Math.min(m.rate.inspiration, INSPIRATION_TRAIT_RATE_CAP);
+  for (const n of NEEDS) if (typeof rates[n] === "number") m.rate[n] *= rates[n]!;
+  for (const k of Object.keys(m.feeds) as InnerEventKind[]) for (const n of Object.keys(m.feeds[k]!) as Need[]) m.feeds[k]![n] = Math.max(-FEED_CAP, Math.min(FEED_CAP, m.feeds[k]![n]!));
   return m;
 }
 
@@ -496,6 +524,8 @@ function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number, a
       applyEventDb(db, mods, { kind: c.kind, reason: `"${oneLine(e.content.slice(at, m.index + 80), 90)}"`, intensity: EPISODE_CUE_INTENSITY }, "episode", now);
     }
   } catch { /* ok */ }
+  // 2d. the owner talking with the agent in a live session (meta.owner, or config fallbacks); capped per rolling hour
+  try { ownerChatDb(db, cfg, mods, from, now); } catch { /* ok */ }
   // 3. decision outcomes since the last tick are reward prediction errors
   try {
     const rows = db.prepare("SELECT chosen, predicted_confidence AS p, outcome_status AS st FROM decisions WHERE outcome_at > ? AND outcome_at <= ? AND outcome_status IS NOT NULL").all(from, now) as Array<{ chosen: string; p: number | null; st: string }>;
@@ -628,7 +658,11 @@ function applyEventDb(db: Database.Database, mods: TraitMods, input: InnerEventI
   const I = input.intensity ?? 1;
   const out: { rpe?: number; moodletId?: string } = {};
   const reason = oneLine(input.reason || input.kind, 200);
-  for (const [n, d] of Object.entries(spec.needs)) adjustNeed(db, n as Need, d! * I, now);
+  const fit = mods.feeds[input.kind] ?? {};
+  for (const n of new Set([...Object.keys(spec.needs), ...Object.keys(fit)]) as Set<Need>) {
+    const d = ((spec.needs[n] ?? 0) + (fit[n] ?? 0)) * I;
+    if (d) adjustNeed(db, n, d, now);
+  }
   // praise lands harder on a vain agent (trait `praise` factor)
   const moodI = 0.6 * I * (input.kind === "praise" ? mods.praise : 1);
   if (spec.mood) out.moodletId = addMoodlet(db, { ...spec.mood, reason, intensity: moodI, source: `event:${input.kind}` }, mods, now);
@@ -648,6 +682,32 @@ function applyEventDb(db: Database.Database, mods: TraitMods, input: InnerEventI
   return out;
 }
 
+/** Is this user episode the owner? meta.owner === true wins; else ownerAllowFrom (sender) or ownerSessionIds. */
+export function isOwnerEpisode(e: { session_id?: string | null; meta?: string | null }, cfg?: Partial<BrainConfig>): boolean {
+  let meta: Record<string, unknown> = {};
+  try { meta = e.meta ? (JSON.parse(e.meta) as Record<string, unknown>) : {}; } catch { meta = {}; }
+  if (meta.owner === true) return true;
+  if (meta.owner === false) return false;
+  const c = innerConfig(cfg);
+  const allow = new Set((c.ownerAllowFrom ?? []).map((x) => String(x).trim().toLowerCase()).filter(Boolean));
+  if (allow.size) for (const k of ["sender", "senderId", "from", "sender_id"]) {
+    const v = meta[k];
+    if ((typeof v === "string" || typeof v === "number") && allow.has(String(v).trim().toLowerCase())) return true;
+  }
+  return !!e.session_id && (c.ownerSessionIds ?? []).includes(e.session_id);
+}
+
+function ownerChatDb(db: Database.Database, cfg: Partial<BrainConfig>, mods: TraitMods, from: number, now: number): void {
+  const eps = db.prepare("SELECT session_id, meta, created_at FROM episodes WHERE created_at > ? AND created_at <= ? AND role = 'user' ORDER BY created_at").all(from, now) as Array<{ session_id: string; meta: string | null; created_at: number }>;
+  const owned = eps.filter((e) => isOwnerEpisode(e, cfg));
+  if (!owned.length) return;
+  const recent = (db.prepare("SELECT COUNT(*) AS n FROM inner_events WHERE kind = 'owner_chat' AND at > ? AND at <= ?").get(now - HOUR, now) as { n: number }).n;
+  // one credit per half hour of chat in this window, never past the hourly cap
+  const spanH = (owned[owned.length - 1]!.created_at - owned[0]!.created_at) / HOUR;
+  const credits = Math.min(OWNER_CHAT_MAX_PER_HOUR - recent, 1 + Math.floor(spanH * 2));
+  for (let i = 0; i < credits; i++) applyEventDb(db, mods, { kind: "owner_chat", reason: "talking with the mayor" }, "owner-session", now);
+}
+
 /**
  * Conservative cues in conversation turns that count as events (one per kind per tick).
  * They let the layer run on hosts that do not expose brain_inner yet. Owner turns can carry
@@ -657,7 +717,7 @@ const EPISODE_CUES: Array<{ kind: InnerEventKind; role: "user" | "assistant" | "
   { kind: "collab",    role: "any",       re: /\b(collab(orat(e|ed|ing|ion))?|pair(ed)? up|teamed up|worked (on it )?together|together with)\b/i },
   { kind: "hobby",     role: "assistant", re: /\b(my hobby|for fun|just for fun|played (music|a game|guitar)|doodled|tinkered)\b/i },
   { kind: "novelty",   role: "assistant", re: /\b(discovered|for the first time|never seen|didn'?t expect|surprised me|explored)\b/i },
-  { kind: "success",   role: "assistant", re: /\b(shipped|all tests pass(ed)?|tests (are )?green|merged it|deployed it|it works now)\b/i },
+  { kind: "success",   role: "assistant", re: /\b(shipped|all tests pass(ed)?|tests (are )?green|merged it|deployed it|it works now|all pass|0 failures|placed (it )?in game3d)\b/i },
   { kind: "failure",   role: "assistant", re: /\b(i broke|build (is )?(red|broken)|my (fix|change) failed|that didn'?t work)\b/i },
   { kind: "praise",    role: "user",      re: /\b(great job|well done|nice work|good work|love (it|this)|amazing work|thank you|thanks)\b/i },
   { kind: "rejection", role: "user",      re: /\b(that'?s (wrong|not what i asked)|i don'?t like (it|this)|not what i (asked|wanted)|stop doing)\b/i },

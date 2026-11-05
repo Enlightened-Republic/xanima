@@ -69,13 +69,13 @@ describe("inner life: needs decay (homeostatic drives)", () => {
     innerTick(id, {}, T0 + 24 * H);
     innerEvent(id, {}, { kind: "collab", reason: "built the bridge with Gion" }, T0 + 24 * H);
     expect(need(id, "social", T0 + 24 * H).level).toBeCloseTo(NEED_START - 0.5 + 0.6, 5);
-    // curious drains inspiration 1.5x faster
+    // curious drains inspiration faster (×1.5, capped at ×1.3 for Inspiration since 2026-11-04)
     const a = fresh(), b = fresh();
     innerTick(a, {}, T0); innerTick(b, { innerLife: { traits: ["curious"] } }, T0);
     innerTick(a, {}, T0 + 10 * H); innerTick(b, { innerLife: { traits: ["curious"] } }, T0 + 10 * H);
     const la = innerSnapshot(a, {}, T0 + 10 * H)!.needs.find((x) => x.need === "inspiration")!.level;
     const lb = innerSnapshot(b, { innerLife: { traits: ["curious"] } }, T0 + 10 * H)!.needs.find((x) => x.need === "inspiration")!.level;
-    expect(NEED_START - lb).toBeCloseTo((NEED_START - la) * 1.5, 5);
+    expect(NEED_START - lb).toBeCloseTo((NEED_START - la) * 1.3, 5);
     for (const x of [id, a, b]) closeDb(x);
   });
 
@@ -346,9 +346,9 @@ describe("inner life: crew traits have real effects", () => {
     const cfg = { innerLife: { traits: ["restless"] } };
     innerTick(a, {}, T0); innerTick(b, cfg, T0);
     innerTick(a, {}, T0 + 10 * H); innerTick(b, cfg, T0 + 10 * H);
-    for (const n of ["inspiration", "fun"]) expect(NEED_START - level(b, cfg, n, T0 + 10 * H)).toBeCloseTo((NEED_START - level(a, {}, n, T0 + 10 * H)) * 1.4, 5);
+    for (const [n, f] of [["inspiration", 1.3], ["fun", 1.4]] as const) expect(NEED_START - level(b, cfg, n, T0 + 10 * H)).toBeCloseTo((NEED_START - level(a, {}, n, T0 + 10 * H)) * f, 5);
     expect(NEED_START - level(b, cfg, "social", T0 + 10 * H)).toBeCloseTo(NEED_START - level(a, {}, "social", T0 + 10 * H), 5);
-    expect(innerSnapshot(b, cfg, T0 + 10 * H)!.drainRates.inspiration).toBeCloseTo(1.4, 5);
+    expect(innerSnapshot(b, cfg, T0 + 10 * H)!.drainRates.inspiration).toBeCloseTo(1.3, 5); // trait cap
     // other crew traits move the numbers they promise, all modest
     expect(traitMods(["loyal"]).weight.relatedness).toBeCloseTo(1.4, 5);
     expect(traitMods(["petty"]).neg).toBeCloseTo(1.2, 5);
@@ -362,7 +362,7 @@ describe("inner life: crew traits have real effects", () => {
   it("invented phrases map to effects: exact keys win, words and synonyms inside apply, unknown words are kept", () => {
     const keys = (p: string) => resolveTrait(p).effects.map((e) => `${e.key}${e.strength < 1 ? "/2" : ""}`).sort();
     expect(keys("curious mildly chaotic tinkerer the fox side")).toEqual(["chaotic/2", "curious", "tinkerer"]);
-    expect(keys("builds it then goes and looks")).toEqual(["curious", "tinkerer"]);
+    expect(keys("builds it then goes and looks")).toEqual(["builder", "curious"]);
     expect(keys("a little restless")).toEqual(["restless/2"]);
     expect(keys("protective of the crew")).toEqual(["protective"]);
     expect(keys("checks before claiming")).toEqual(["careful"]);
@@ -372,10 +372,10 @@ describe("inner life: crew traits have real effects", () => {
     expect(keys("can't sit still")).toEqual(["restless"]);
     expect(keys("reuses what i already drew")).toEqual([]);
     // the invented phrase really changes the numbers; half strength moves halfway
-    expect(traitMods(["wanders off when bored"]).rate.inspiration).toBeCloseTo(1.4, 5);
+    expect(traitMods(["wanders off when bored"]).rate.inspiration).toBeCloseTo(1.3, 5);
     expect(traitMods(["a little restless"]).rate.inspiration).toBeCloseTo(1.2, 5);
     // the same trait named twice applies once
-    expect(traitMods(["curious", "goes and looks around"]).rate.inspiration).toBeCloseTo(1.5, 5);
+    expect(traitMods(["curious", "goes and looks around"]).rate.inspiration).toBeCloseTo(1.3, 5);
     // nothing is dropped: unknown phrases stay in the list and show in status
     const id = fresh();
     const cfg = { innerLife: { traits: ["Reuses what I already drew", "Builds it, then goes and looks"] } };
@@ -384,7 +384,7 @@ describe("inner life: crew traits have real effects", () => {
     expect(s.traits).toEqual(["reuses what i already drew", "builds it then goes and looks"]);
     const st = formatInnerStatus(s);
     expect(st).toMatch(/reuses what i already drew \(no built-in effect\)/);
-    expect(st).toMatch(/builds it then goes and looks \(→ curious, tinkerer\)/);
+    expect(st).toMatch(/builds it then goes and looks \(→ curious, builder\)/);
     closeDb(id);
   });
 

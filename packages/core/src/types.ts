@@ -319,7 +319,7 @@ export interface BrainConfig {
    * traits and wants, with a 3-line [inner] block in the turn header. `false` turns
    * it off; an object tunes it. Default on.
    */
-  innerLife?: boolean | { enabled?: boolean; header?: boolean; autoWants?: boolean; traits?: string[]; traitsByAgent?: Record<string, string[]>; needRates?: Partial<Record<"social" | "fun" | "inspiration" | "rest" | "autonomy" | "competence" | "relatedness", number>> };
+  innerLife?: boolean | { enabled?: boolean; header?: boolean; autoWants?: boolean; traits?: string[]; traitsByAgent?: Record<string, string[]>; needRates?: Partial<Record<"social" | "fun" | "inspiration" | "rest" | "autonomy" | "competence" | "relatedness", number>>; ownerSessionIds?: string[]; ownerAllowFrom?: Array<string | number> };
 }
 
 export interface InjectionCategories {
