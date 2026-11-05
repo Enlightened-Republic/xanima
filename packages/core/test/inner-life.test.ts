@@ -290,11 +290,11 @@ describe("inner life: header", () => {
 });
 
 describe("inner life: traits, sleep, tool, reset", () => {
-  it("reads 3-5 traits from the identity field \"Traits\"", () => {
+  it("reads up to MAX_TRAITS (8) traits from the identity field \"Traits\"", () => {
     const id = fresh();
     const db = getDb(id);
-    db.prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'").run("- **Name:** Wick\n- **Traits:** Curious, playful · sensitive; driven, warm, extra-one");
-    expect(readTraits(db)).toEqual(["curious", "playful", "sensitive", "driven", "warm"]);
+    db.prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'").run("- **Name:** Wick\n- **Traits:** Curious, playful · sensitive; driven, warm, calm, social, cheerful, extra-one");
+    expect(readTraits(db)).toEqual(["curious", "playful", "sensitive", "driven", "warm", "calm", "social", "cheerful"]);
     closeDb(id);
   });
 

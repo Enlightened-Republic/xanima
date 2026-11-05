@@ -271,6 +271,9 @@ function hasTables(db: Database.Database): boolean {
  * Traits: the identity field "Traits" (comma / · / ; separated), else config.innerLife.traitsByAgent[agentId],
  * else config.innerLife.traits. Whole phrases are kept (lower-cased); max 5.
  */
+/** Most traits read per agent (identity field, traitsByAgent or traits); extra entries are ignored. */
+export const MAX_TRAITS = 8;
+
 export function readTraits(db: Database.Database, cfg?: Partial<BrainConfig>, agentId?: string): string[] {
   let raw = "";
   try {
@@ -287,7 +290,7 @@ export function readTraits(db: Database.Database, cfg?: Partial<BrainConfig>, ag
     list = mine && mine.length ? mine : (c.traits ?? []);
   }
   const norm = (t: string) => String(t).toLowerCase().replace(/\u2019/g, "'").replace(/[^a-z0-9 '-]/g, " ").replace(/\s+/g, " ").trim();
-  return [...new Set(list.map(norm).filter(Boolean))].slice(0, 5);
+  return [...new Set(list.map(norm).filter(Boolean))].slice(0, MAX_TRAITS);
 }
 
 interface TraitMods { rate: Record<Need, number>; weight: Record<Need, number>; pos: number; neg: number; duration: number; rpeNeg: number; lossAversion: number; restLoad: number; praise: number; wants: Set<Need>; feeds: Partial<Record<InnerEventKind, Partial<Record<Need, number>>>> }
