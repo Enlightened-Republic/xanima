@@ -34,7 +34,7 @@ On each tick, the layer reads what happened in the brain since the last tick:
 - **Decision outcomes** are prediction errors: the expected value is `predicted_confidence` (0.6 if unset) and the actual value is 1 for matched, 0.5 for partial and 0 for missed.
 - **Kept commitments** raise Competence by 0.1 each.
 - **New contradicts / supersedes edges** (the model updating itself) raise Inspiration by 0.08 each.
-- **Conversation cues** are a conservative phrase list, at most one event per kind per tick, at intensity 0.5. The owner's turns can carry praise or rejection. The agent's own turns can carry collab, hobby, novelty, success or failure.
+- **Conversation cues** are a conservative phrase list, at most one event per kind per tick, at intensity 0.5. The owner's turns can carry praise or rejection. The agent's own turns can carry collab, hobby, novelty, success or failure. `innerLife.episodeCueSkip` (e.g. `["success"]`) lists kinds that chat may never fire: set it when the host reports the real event through `brain_inner event` or `inner:<kind>` tags, so an agent describing its work ("the last thing I shipped...") is not credited twice. Explicit events and memory tags are unaffected.
 - **Sleep** restores Rest, spends the phasic burst, and lapses wants older than 7 days.
 
 ## Turn header

@@ -4,6 +4,9 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
 
+- **`innerLife.episodeCueSkip`:** event kinds that conversation cues may not fire (e.g. `["success"]`). For hosts that report real shipping through `brain_inner event` / `inner:success` tags, so an agent saying "shipped" in chat no longer resets Proud. Explicit events and memory tags still land. Test: `inner-life-cue-skip.test.ts`.
+- **Mayor's rules (2026-11-05) as cues:** brainstorming / dreaming up / designing together count as hobby + collab (Fun, Social); "ran with your idea", "you didn't ask for" count as chosen (Autonomy). `owner_chat` also feeds Fun +0.15 and Social +0.2. Test: `inner-life-mayor-rules.test.ts`.
+
 - **Crew traits have real effects:** restless, loyal, secretly loyal, petty, vain, blunt, sharp, direct, precise, exacting, sharp-tongued, allusive, amused, dry-humored, protective, careful, tinkerer and chaotic join the trait table (all factors 0.7..1.5). `vain` makes praise land 1.4× harder.
 - **Invented traits work:** whole phrases are kept; an exact trait wins, otherwise trait words and a small synonym map inside the phrase apply (softeners like "a little" give half strength). Unknown words are kept and shown with no effect. A trait named twice applies once. Loss aversion now combines across traits as a ratio.
 - **Per-agent traits:** `innerLife.traitsByAgent` (keyed by brain id) sits between the identity field `Traits` (still wins) and `innerLife.traits`. Status shows each phrase's mapping and the drain multipliers; json adds `traitEffects` and `drainRates`.

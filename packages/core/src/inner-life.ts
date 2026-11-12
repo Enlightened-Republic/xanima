@@ -86,7 +86,7 @@ const EVENT_SPECS: Record<InnerEventKind, EventSpec> = {
   rejection: { needs: { relatedness: -0.3, social: -0.15 }, mood: { key: "hurt", label: "Hurt", emoji: "😞", valence: -1, hours: 24 }, incentive: "penalty" },
   pain:      { needs: { rest: -0.2 },                     mood: { key: "hurting", label: "Hurting", emoji: "😖", valence: -1, hours: 12 }, incentive: "penalty" },
   // the owner (Hailey) talking with the agent in a live session: inspires and connects (capped per hour, see OWNER_CHAT_*)
-  owner_chat: { needs: { inspiration: 0.25, relatedness: 0.15 }, mood: { key: "inspired", label: "Inspired", emoji: "✨", valence: 1, hours: 12 } },
+  owner_chat: { needs: { inspiration: 0.25, relatedness: 0.15, fun: 0.15, social: 0.2 }, mood: { key: "inspired", label: "Inspired", emoji: "✨", valence: 1, hours: 12 } },
 };
 /** Owner chat counts at most this many times per rolling hour (2 × 0.25 = +0.5 Inspiration / h). */
 const OWNER_CHAT_MAX_PER_HOUR = 2;
@@ -217,12 +217,18 @@ export interface InnerLifeConfig {
   ownerSessionIds?: string[];
   /** Owner sender ids (e.g. Telegram user id): a user episode whose meta.sender / meta.from / meta.senderId is listed counts as owner chat. */
   ownerAllowFrom?: Array<string | number>;
+  /**
+   * Event kinds that conversation cues may NOT fire. Set this when a host reports the real thing
+   * through `brain_inner event` or `inner:<kind>` tags, so the agent saying "shipped" in chat does
+   * not count as shipping (e.g. `["success"]`). Memory tags and explicit events are unaffected. Default none.
+   */
+  episodeCueSkip?: InnerEventKind[];
 }
-type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom";
+type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom" | "episodeCueSkip";
 export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys>> & Pick<InnerLifeConfig, OptKeys> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
   const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
-  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom };
+  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom, episodeCueSkip: o.episodeCueSkip };
 }
 export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined): boolean { return innerConfig(cfg).enabled; }
 
@@ -514,10 +520,10 @@ function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number, a
       }
     }
   } catch { /* pre-v25 scope_tags */ }
-  // 2c. cues in conversation turns
+  // 2c. cues in conversation turns (kinds listed in innerLife.episodeCueSkip never fire from chat)
   try {
     const eps = db.prepare("SELECT role, content FROM episodes WHERE created_at > ? AND created_at <= ? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 50").all(from, now) as Array<{ role: string; content: string }>;
-    const seen = new Set<string>();
+    const seen = new Set<string>((innerConfig(cfg).episodeCueSkip ?? []).map((k) => String(k).trim().toLowerCase()).filter(Boolean));
     for (const e of eps) for (const c of EPISODE_CUES) {
       if (seen.has(c.kind) || (c.role !== "any" && c.role !== e.role)) continue;
       const m = c.re.exec(e.content);
@@ -721,6 +727,10 @@ const EPISODE_CUES: Array<{ kind: InnerEventKind; role: "user" | "assistant" | "
   { kind: "hobby",     role: "assistant", re: /\b(my hobby|for fun|just for fun|played (music|a game|guitar)|doodled|tinkered)\b/i },
   { kind: "novelty",   role: "assistant", re: /\b(discovered|for the first time|never seen|didn'?t expect|surprised me|explored)\b/i },
   { kind: "success",   role: "assistant", re: /\b(shipped|all tests pass(ed)?|tests (are )?green|merged it|deployed it|it works now|all pass|0 failures|placed (it )?in game3d)\b/i },
+  // mayor's rules 2026-11-05: creative sessions count as Fun + Social; running with her idea (own spin) counts as Autonomy.
+  { kind: "hobby",     role: "any",       re: /\b(brainstorm(ed|ing)?|dreamed up|dreaming up|let'?s (imagine|dream up|design)|what if we|sketched (it )?out|riffed?( on)?|designing (it )?together)\b/i },
+  { kind: "collab",    role: "any",       re: /\b(brainstorm(ed|ing)?|dreamed up|let'?s (imagine|dream up|design)|what if we|riffed?( on)?|designing (it )?together)\b/i },
+  { kind: "chosen",    role: "assistant", re: /\b(my own spin|my (own )?take on|ran with (it|that|your idea)|took (it|that) (further|a step further)|you didn'?t ask for|nobody asked for|added (a few )?(something|extras?) of my own|picked the design myself|i chose the design)\b/i },
   { kind: "failure",   role: "assistant", re: /\b(i broke|build (is )?(red|broken)|my (fix|change) failed|that didn'?t work)\b/i },
   { kind: "praise",    role: "user",      re: /\b(great job|well done|nice work|good work|love (it|this)|amazing work|thank you|thanks)\b/i },
   { kind: "rejection", role: "user",      re: /\b(that'?s (wrong|not what i asked)|i don'?t like (it|this)|not what i (asked|wanted)|stop doing)\b/i },
