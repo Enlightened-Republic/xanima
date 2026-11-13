@@ -4,6 +4,7 @@ All notable changes to the Sharpwave TypeScript MCP server.
 
 ## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
 
+- **`innerLife.excludeAgents`:** listed agent ids skip the inner-life layer (tick, header, wants, events) without losing memory tools. For non-crew agents on the same service. Test: `inner-life-exclude.test.ts`.
 - **`innerLife.episodeCueSkip`:** event kinds that conversation cues may not fire (e.g. `["success"]`). For hosts that report real shipping through `brain_inner event` / `inner:success` tags, so an agent saying "shipped" in chat no longer resets Proud. Explicit events and memory tags still land. Test: `inner-life-cue-skip.test.ts`.
 - **Mayor's rules (2026-11-05) as cues:** brainstorming / dreaming up / designing together count as hobby + collab (Fun, Social); "ran with your idea", "you didn't ask for" count as chosen (Autonomy). `owner_chat` also feeds Fun +0.15 and Social +0.2. Test: `inner-life-mayor-rules.test.ts`.
 

@@ -35,6 +35,7 @@ On each tick, the layer reads what happened in the brain since the last tick:
 - **Kept commitments** raise Competence by 0.1 each.
 - **New contradicts / supersedes edges** (the model updating itself) raise Inspiration by 0.08 each.
 - **Conversation cues** are a conservative phrase list, at most one event per kind per tick, at intensity 0.5. The owner's turns can carry praise or rejection. The agent's own turns can carry collab, hobby, novelty, success or failure. `innerLife.episodeCueSkip` (e.g. `["success"]`) lists kinds that chat may never fire: set it when the host reports the real event through `brain_inner event` or `inner:<kind>` tags, so an agent describing its work ("the last thing I shipped...") is not credited twice. Explicit events and memory tags are unaffected.
+- **`innerLife.excludeAgents`:** agent ids that skip the inner-life layer (no tick, header, wants, or events). Memory tools are unaffected. Use this for a non-crew agent who shares the service but should stay out of town inner life (e.g. `["mila"]`).
 - **Sleep** restores Rest, spends the phasic burst, and lapses wants older than 7 days.
 
 ## Turn header

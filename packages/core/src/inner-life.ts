@@ -223,14 +223,27 @@ export interface InnerLifeConfig {
    * not count as shipping (e.g. `["success"]`). Memory tags and explicit events are unaffected. Default none.
    */
   episodeCueSkip?: InnerEventKind[];
+  /**
+   * Agent ids that should not run the inner-life layer (no tick, header, wants, or events).
+   * Memory tools (brain_write, recall, etc.) are unaffected. Use this for non-crew agents
+   * who share the service but should stay out of town inner life (e.g. ["mila"]).
+   */
+  excludeAgents?: string[];
 }
-type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom" | "episodeCueSkip";
+type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom" | "episodeCueSkip" | "excludeAgents";
 export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys>> & Pick<InnerLifeConfig, OptKeys> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
   const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
-  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom, episodeCueSkip: o.episodeCueSkip };
+  return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom, episodeCueSkip: o.episodeCueSkip, excludeAgents: o.excludeAgents };
 }
-export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined): boolean { return innerConfig(cfg).enabled; }
+/** True when the layer is on globally. Pass agentId to also honor innerLife.excludeAgents. */
+export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined, agentId?: string): boolean {
+  if (!innerConfig(cfg).enabled) return false;
+  if (!agentId) return true;
+  const id = String(agentId).trim().toLowerCase();
+  const ex = (innerConfig(cfg).excludeAgents ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+  return !ex.includes(id);
+}
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
@@ -481,7 +494,7 @@ export function applyRpe(db: Database.Database, input: { expected: number; actua
  * Idempotent for a given `now`. Returns false when the layer is off.
  */
 export function innerTick(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now()): boolean {
-  if (!innerLifeEnabled(cfg)) return false;
+  if (!innerLifeEnabled(cfg, agentId)) return false;
   const db = getDb(agentId);
   if (!hasTables(db)) return false;
   db.transaction(() => tickDb(db, cfg, now, agentId))();
@@ -647,7 +660,7 @@ function syncWants(db: Database.Database, mods: TraitMods, now: number): void {
 export interface InnerEventInput { kind: InnerEventKind; reason?: string; intensity?: number; tags?: string[]; expected?: number; actual?: number }
 /** Something happened that matters to a need or an incentive. Ticks first, then applies. */
 export function innerEvent(agentId: string, cfg: Partial<BrainConfig>, input: InnerEventInput, now = Date.now()): { ok: boolean; error?: string; rpe?: number; moodletId?: string } {
-  if (!innerLifeEnabled(cfg)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
   const spec = EVENT_SPECS[input.kind];
   if (!spec) return { ok: false, error: `kind must be one of ${EVENT_KINDS.join(", ")}` };
   const I = typeof input.intensity === "number" && Number.isFinite(input.intensity) && input.intensity >= 0 ? input.intensity : 1;
@@ -739,7 +752,7 @@ const EPISODE_CUE_INTENSITY = 0.5;
 
 export interface WantInput { what: string; why?: string; cost?: string; costHours?: number; need?: string; tags?: string[]; reward?: number; penalty?: number; expectedSuccess?: number; source?: string }
 export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantInput, now = Date.now()): { ok: boolean; error?: string; id?: string } {
-  if (!innerLifeEnabled(cfg)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
   const what = oneLine(input.what ?? "", 200);
   if (!what) return { ok: false, error: "what is required" };
   if (input.need !== undefined && !isNeed(input.need)) return { ok: false, error: `need must be one of ${NEEDS.join(", ")}` };
@@ -760,7 +773,7 @@ export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantI
 
 /** Finish a want. liking 0..1 = how it actually went; liking − wanting is the prediction error. */
 export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPrefix: string, input: { status: "done" | "dropped"; liking?: number; note?: string }, now = Date.now()): { ok: boolean; error?: string; rpe?: number; want?: string } {
-  if (!innerLifeEnabled(cfg)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
   const db = getDb(agentId);
   const p = (idOrPrefix ?? "").trim();
   if (p.length < 6) return { ok: false, error: "want_id (or a 6+ char prefix) is required" };
@@ -787,7 +800,7 @@ export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPref
 
 /** Sleep: rest recovers, the phasic dopamine burst is spent, wants older than a week lapse. */
 export function innerSleep(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now()): boolean {
-  if (!innerLifeEnabled(cfg)) return false;
+  if (!innerLifeEnabled(cfg, agentId)) return false;
   const db = getDb(agentId);
   if (!hasTables(db)) return false;
   db.transaction(() => {
@@ -804,7 +817,7 @@ export function innerSleep(agentId: string, cfg: Partial<BrainConfig> = {}, now 
 
 /** Read-only view of the inner state at `now` (needs projected, moodlet intensities decayed). Null when the layer is off or never started. */
 export function innerSnapshot(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now()): InnerSnapshot | null {
-  if (!innerLifeEnabled(cfg)) return null;
+  if (!innerLifeEnabled(cfg, agentId)) return null;
   const db = getDb(agentId);
   if (!hasTables(db)) return null;
   const s = db.prepare("SELECT * FROM inner_state WHERE id = 'singleton'").get() as StateRow | undefined;
