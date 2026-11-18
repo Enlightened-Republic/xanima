@@ -2,7 +2,18 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
-## Unreleased: inner-life continuity (branch `inner-life-continuity`, schema v31)
+## 0.8.0 (Xanima) - 2026-11-18
+
+Inner life: an optional motivation layer on top of memory (needs, dopamine, moodlets, a mood ladder, traits, wants), plus continuity for it (wants that come back, away notes, recent mood weather, bonds). Additive schema bumps v29, v30 and v31; nothing existing changes, and node / edge / episode counts never change on migration. Packages: `xanima-core` 0.8.0, `xanima` 0.8.0 (MCP server), `xanima-server` 0.8.0. Design doc: `docs/INNER-LIFE.md`.
+
+### Migration note: inner life is off by default
+
+- **Fresh installs and hosts on 0.7.0:** nothing to do. With no `innerLife` key the layer is off: no ticks, no `[inner]` header lines, and `brain_inner` refuses with a message that says how to turn it on. The v29-v31 tables are created and left unused.
+- **Hosts that ran the `inner-life` branch before this release:** that branch had the layer on unless `innerLife` was `false`. If your config has no `innerLife` key, the layer goes quiet after the upgrade. Add `"innerLife": true` to the brain config to keep it (on `xanima-server` that is `brain.innerLife` in the service `config.json`; restart to pick it up).
+- **Hosts with an `innerLife` object** (for example only `traitsByAgent` or `excludeAgents`): no change. Writing the block is opting in; only `"enabled": false` inside it turns the layer off.
+- Turning the layer off deletes nothing. The `inner_*` tables stay as they are.
+
+### Continuity (schema v31)
 
 Four additions to the inner-life layer about carrying something from one wake to the next. Additive schema bump v31 (seven columns on `inner_wants` / `inner_state`, four new tables; nothing existing changes). Module `packages/core/src/inner-continuity.ts`. Design and examples: `docs/INNER-LIFE.md`, section "Continuity". No new tool: `brain_inner` gains four actions, so the tool count stays the same.
 
@@ -15,7 +26,7 @@ Four additions to the inner-life layer about carrying something from one wake to
 - Everything is a no-op when `innerLife` is off or the agent is in `excludeAgents`.
 - Tests: `packages/core/test/inner-continuity.test.ts` (30 tests), plus service coverage in `packages/server/test/continuity.test.ts`.
 
-## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
+### Crew traits and moods that linger (schema v30)
 
 - **`innerLife.excludeAgents`:** listed agent ids skip the inner-life layer (tick, header, wants, events) without losing memory tools. For non-crew agents on the same service. Test: `inner-life-exclude.test.ts`.
 - **`innerLife.episodeCueSkip`:** event kinds that conversation cues may not fire (e.g. `["success"]`). For hosts that report real shipping through `brain_inner event` / `inner:success` tags, so an agent saying "shipped" in chat no longer resets Proud. Explicit events and memory tags still land. Test: `inner-life-cue-skip.test.ts`.
@@ -26,7 +37,7 @@ Four additions to the inner-life layer about carrying something from one wake to
 - **Per-agent traits:** `innerLife.traitsByAgent` (keyed by brain id) sits between the identity field `Traits` (still wins) and `innerLife.traits`. Status shows each phrase's mapping and the drain multipliers; json adds `traitEffects` and `drainRates`.
 - **Mood ladder (v30):** Sad / Low / Okay / Good / Happy stored in `inner_state.mood_state`, one rung per tick toward the raw mood, with a 0.1 hysteresis margin; Happy needs one good moodlet ≥ 0.5. Moodlets matching the rung decay 1.5× slower (emotional inertia). Shown in the header, status and `moodState` in json. Additive migration `migrateV30`.
 
-## Unreleased: inner life (branch `inner-life`)
+### Inner life (schema v29)
 
 A functional motivation layer: needs that drain, dopamine as reward prediction error, expectancy, incentives, traits, moodlets and wants, with a compact `[inner]` block in every turn header so the agent feels the push. These are described as functional states. Nothing claims human-identical feeling. Additive schema bump v29 (six new `inner_*` tables; nothing existing changes). Full design: `docs/INNER-LIFE.md`.
 
