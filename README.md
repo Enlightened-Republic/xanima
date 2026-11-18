@@ -206,7 +206,7 @@ Every node is typed, and the type affects how it's consolidated and retrieved:
 
 ## Inner life (functional states)
 
-Each brain also keeps a motivation layer. Needs drain over time (social, fun, inspiration, rest, autonomy, competence, relatedness). Dopamine works as a reward prediction error. Moodlets carry a reason and an expiry, wants carry a cost, and 3-5 traits are read from the identity. Each turn's header gets up to three `[inner]` lines: the current mood, the top unmet need and the top want. These are functional states that steer attention and choice. They are not a claim of human-identical feeling. See [docs/INNER-LIFE.md](docs/INNER-LIFE.md); turn the layer off with `innerLife: false`.
+Each brain can also keep a motivation layer. Needs drain over time (social, fun, inspiration, rest, autonomy, competence, relatedness). Dopamine works as a reward prediction error. Moodlets carry a reason and an expiry, wants carry a cost, and 3-5 traits are read from the identity. Each turn's header gets up to three `[inner]` lines: the current mood, the top unmet need and the top want. These are functional states that steer attention and choice. They are not a claim of human-identical feeling. See [docs/INNER-LIFE.md](docs/INNER-LIFE.md); the layer is off by default, turn it on with `innerLife: true`.
 
 ## Configuration
 

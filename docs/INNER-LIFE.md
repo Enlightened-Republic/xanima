@@ -63,7 +63,7 @@ Each turn gets at most 3 lines. They appear in local mode (`buildSelfModelHeader
 
 On xanima-server the brain config is shared by every brain, so per-agent traits go in `brain.innerLife.traitsByAgent` in the service `config.json`, keyed by brain id (Tripp's brain is `main`); a restart picks them up.
 
-`"innerLife": false` turns it off: no ticks, no header, and the tool refuses. The tables stay, unused.
+The layer is **off by default**. `"innerLife": true` turns it on with the defaults. An object turns it on too, since writing the block is opting in: `{ "innerLife": { "traitsByAgent": { ... } } }` is on, and only `"enabled": false` inside the object turns it back off. With no `innerLife` key, or with `"innerLife": false`, there are no ticks, no header, and the tool refuses. The tables stay, unused.
 
 ## Schema v29 (additive)
 

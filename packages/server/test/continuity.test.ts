@@ -35,7 +35,7 @@ describe("continuity tools on the service", () => {
   });
 
   it("goals: set / supersede with history / list; turn context delivers the alignment note once and fires keyword triggers", async () => {
-    const h = await startService({ brain: { intentDriftCheck: "daily", driftDays: 7 } });
+    const h = await startService({ brain: { intentDriftCheck: "daily", driftDays: 7, innerLife: true } });
     try {
       const a = h.mint("a");
       const g = await tool(h.url, a, "brain_set_goal", { title: "Ship the billing migration", priority: "critical", keywords: ["billing", "migration"], triggers: [{ kind: "keyword", keywords: ["invoice"] }] });

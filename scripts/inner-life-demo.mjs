@@ -16,7 +16,7 @@ const { getDb, closeDb, innerTick, innerEvent, innerSnapshot, formatInnerHeader,
 const H = 3600_000;
 const T0 = Date.UTC(2026, 10, 4, 9, 0, 0);
 const agent = "wick-demo";
-const cfg = {};
+const cfg = { innerLife: true };
 getDb(agent).prepare("UPDATE self_model SET identity = ? WHERE id = 'singleton'").run("- **Name:** Wick\n- **Traits:** curious, warm, sensitive");
 
 const at = (h) => T0 + h * H;

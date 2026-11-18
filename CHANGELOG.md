@@ -25,7 +25,7 @@ A functional motivation layer: needs that drain, dopamine as reward prediction e
 - **Wants:** a new item type (what, why, cost, source, wanting, liking), generated from unmet needs and traits or added by the agent.
 - **Header:** up to 3 lines (mood, top unmet need, top want) in the local self-model header and in `brain_turn_context` (as `inner`, and at the head of `text` so current hosts render it).
 - **Tool `brain_inner`** (`status | event | want | done | drop`). Tool count: 34 on the MCP server, 40 in the plugin union. It also runs without the tool: memories tagged `inner:<kind>`, conservative conversation cues, decision outcomes, kept commitments and sleep all feed it.
-- **Config `innerLife`** (default on): `false` turns it off. An object sets `header`, `autoWants`, `traits` and `needRates`.
+- **Config `innerLife`** (off by default, see the migration note above): `true` or an object turns it on. An object sets `header`, `autoWants`, `traits` and `needRates`.
 - Tests: `packages/core/test/inner-life.test.ts` covers needs decay, moodlet expiry and stacking, reward prediction error, expectancy, incentives, the header, the v28→v29 migration, the tool and reset. Two Windows-only test fixes close a brain before deleting its temp dir. Demo: `node scripts/inner-life-demo.mjs`.
 
 ## 0.7.0 (Xanima) — 2026-10-20

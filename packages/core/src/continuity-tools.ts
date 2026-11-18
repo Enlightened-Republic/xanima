@@ -471,7 +471,7 @@ export function dispatchContinuityTool(
       return r.ok ? ok(r.text!) : err(r.error!);
     }
     case "brain_inner": {
-      if (!innerLifeEnabled(config, agentId)) return err("the inner-life layer is off (innerLife: false)");
+      if (!innerLifeEnabled(config, agentId)) return err("the inner-life layer is off (set innerLife: true in the brain config to turn it on)");
       const action = (str(args["action"]) ?? "status").toLowerCase();
       const t = now ?? Date.now();
       const num = (k: string) => (typeof args[k] === "number" && Number.isFinite(args[k]) ? (args[k] as number) : undefined);

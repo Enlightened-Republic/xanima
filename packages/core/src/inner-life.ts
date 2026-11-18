@@ -233,9 +233,12 @@ export interface InnerLifeConfig {
 type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom" | "episodeCueSkip" | "excludeAgents";
 export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys>> & Pick<InnerLifeConfig, OptKeys> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
-  const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
+  // Off unless asked for. `true` turns it on; so does an object (writing the block is opting in)
+  // unless it says `enabled: false`. Absent, null or `false` leaves the layer off.
+  const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : raw && typeof raw === "object" ? raw : { enabled: false };
   return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom, episodeCueSkip: o.episodeCueSkip, excludeAgents: o.excludeAgents };
 }
+const INNER_OFF = "the inner-life layer is off (set innerLife: true in the brain config to turn it on)";
 /** True when the layer is on globally. Pass agentId to also honor innerLife.excludeAgents. */
 export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined, agentId?: string): boolean {
   if (!innerConfig(cfg).enabled) return false;
@@ -660,7 +663,7 @@ function syncWants(db: Database.Database, mods: TraitMods, now: number): void {
 export interface InnerEventInput { kind: InnerEventKind; reason?: string; intensity?: number; tags?: string[]; expected?: number; actual?: number }
 /** Something happened that matters to a need or an incentive. Ticks first, then applies. */
 export function innerEvent(agentId: string, cfg: Partial<BrainConfig>, input: InnerEventInput, now = Date.now()): { ok: boolean; error?: string; rpe?: number; moodletId?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const spec = EVENT_SPECS[input.kind];
   if (!spec) return { ok: false, error: `kind must be one of ${EVENT_KINDS.join(", ")}` };
   const I = typeof input.intensity === "number" && Number.isFinite(input.intensity) && input.intensity >= 0 ? input.intensity : 1;
@@ -752,7 +755,7 @@ const EPISODE_CUE_INTENSITY = 0.5;
 
 export interface WantInput { what: string; why?: string; cost?: string; costHours?: number; need?: string; tags?: string[]; reward?: number; penalty?: number; expectedSuccess?: number; source?: string }
 export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantInput, now = Date.now()): { ok: boolean; error?: string; id?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const what = oneLine(input.what ?? "", 200);
   if (!what) return { ok: false, error: "what is required" };
   if (input.need !== undefined && !isNeed(input.need)) return { ok: false, error: `need must be one of ${NEEDS.join(", ")}` };
@@ -773,7 +776,7 @@ export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantI
 
 /** Finish a want. liking 0..1 = how it actually went; liking − wanting is the prediction error. */
 export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPrefix: string, input: { status: "done" | "dropped"; liking?: number; note?: string }, now = Date.now()): { ok: boolean; error?: string; rpe?: number; want?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const db = getDb(agentId);
   const p = (idOrPrefix ?? "").trim();
   if (p.length < 6) return { ok: false, error: "want_id (or a 6+ char prefix) is required" };
