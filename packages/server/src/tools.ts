@@ -593,7 +593,7 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
         });
         // Inner life (v29): mood, top unmet need, top want. Folded into `text` so hosts that already
         // render the turn-context text show it without an update; also returned on its own as `inner`.
-        const inner = await ctx.brains.write(brain, () => { try { return innerTurnHeader(brain, cfg); } catch { return ""; } });
+        const inner = await ctx.brains.write(brain, () => { try { return innerTurnHeader(brain, cfg, Date.now(), { turnText: q }); } catch { return ""; } });
         const text = inner ? (r.text ? `${inner}\n${r.text}` : inner) : r.text;
         return ok(JSON.stringify({ ...r, text, ...(inner ? { inner } : {}), ...(nowBlock ? { now: nowBlock } : {}), ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }

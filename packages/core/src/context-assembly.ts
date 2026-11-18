@@ -78,6 +78,11 @@ export interface ContextAssemblyOptions {
    * identity/goals prose is suppressed (Engram Graft A).
    */
   externalMemoryActive?: boolean;
+  /**
+   * This turn's message, when the caller has it. Inner life uses it for one thing:
+   * a bond is shown in the header when the person is named in the turn.
+   */
+  turnText?: string;
 }
 
 export async function buildSelfModelHeader(
@@ -143,10 +148,11 @@ export async function buildSelfModelHeader(
     } catch (err) {
       log?.warn(`[xanima] selfModelHeader neuro failed: ${String(err)}`);
     }
-    // Inner life (v29): current mood, top unmet need, top want (≤3 lines). Ticks its own
+    // Inner life (v29): current mood, top unmet need, top want (≤3 lines), plus up to two
+    // conditional continuity lines (v31). Ticks its own
     // inner_* tables only — never ripple counts or retrieval state.
     try {
-      const inner = innerTurnHeader(agentId, _config ?? {});
+      const inner = innerTurnHeader(agentId, _config ?? {}, Date.now(), { turnText: opts.turnText });
       if (inner) parts.push(inner);
     } catch (err) {
       log?.warn(`[xanima] selfModelHeader inner failed: ${String(err)}`);

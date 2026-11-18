@@ -33,12 +33,15 @@
  *   • Wants: what / why / cost / source, generated when needs or traits push,
  *     or written by the agent. Wanting (pull) and liking (how it went) are kept
  *     apart; completing a want is a reward prediction error.
+ *   • Continuity (v31, inner-continuity.ts): own wants come back on a widening
+ *     schedule, away notes, a sentence of recent mood weather, bonds per person.
  */
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getDb } from "./db.js";
 import { identityFields } from "./identity.js";
 import type { BrainConfig } from "./types.js";
+import { continuityTurn, continuitySleep, type WantResurfaceConfig, type AwayConfig, type WeatherConfig, type BondsConfig } from "./inner-continuity.js";
 
 // ─── catalog ─────────────────────────────────────────────────────────────────
 
@@ -229,13 +232,29 @@ export interface InnerLifeConfig {
    * who share the service but should stay out of town inner life (e.g. ["mila"]).
    */
   excludeAgents?: string[];
+  // ── continuity (schema v31, inner-continuity.ts). Each is on once the layer is on; `false` turns one off. ──
+  /** Lines the header may add beyond mood / need / want: back-from-away, a bond named this turn, a want that came back, recent weather. Default 2; 0 hides them all. */
+  headerExtraLines?: number;
+  /** Own wants resurface on a widening schedule (1d, 2d, 4d ... up to 30d) until touched, done or dropped. */
+  wantResurface?: boolean | WantResurfaceConfig;
+  /** Away notes: a short memory of a gap, only past `minHours` (default 4). */
+  away?: boolean | AwayConfig;
+  /** Recent mood weather: one or two sentences written at sleep from the last `days` (default 3). */
+  weather?: boolean | WeatherConfig;
+  /** Bonds: one thread per person, with a direction derived from recent exchanges. */
+  bonds?: boolean | BondsConfig;
 }
+// the continuity keys are resolved by continuityConfig (inner-continuity.ts), not here
 type OptKeys = "traits" | "needRates" | "traitsByAgent" | "ownerSessionIds" | "ownerAllowFrom" | "episodeCueSkip" | "excludeAgents";
-export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys>> & Pick<InnerLifeConfig, OptKeys> {
+type ContinuityKeys = "headerExtraLines" | "wantResurface" | "away" | "weather" | "bonds";
+export function innerConfig(cfg: Partial<BrainConfig> | undefined): Required<Omit<InnerLifeConfig, OptKeys | ContinuityKeys>> & Pick<InnerLifeConfig, OptKeys> {
   const raw = (cfg as { innerLife?: boolean | InnerLifeConfig } | undefined)?.innerLife;
-  const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : (raw ?? {});
+  // Off unless asked for. `true` turns it on; so does an object (writing the block is opting in)
+  // unless it says `enabled: false`. Absent, null or `false` leaves the layer off.
+  const o: InnerLifeConfig = typeof raw === "boolean" ? { enabled: raw } : raw && typeof raw === "object" ? raw : { enabled: false };
   return { enabled: o.enabled !== false, header: o.header !== false, autoWants: o.autoWants !== false, traits: o.traits, traitsByAgent: o.traitsByAgent, needRates: o.needRates, ownerSessionIds: o.ownerSessionIds, ownerAllowFrom: o.ownerAllowFrom, episodeCueSkip: o.episodeCueSkip, excludeAgents: o.excludeAgents };
 }
+export const INNER_OFF = "the inner-life layer is off (set innerLife: true in the brain config to turn it on)";
 /** True when the layer is on globally. Pass agentId to also honor innerLife.excludeAgents. */
 export function innerLifeEnabled(cfg: Partial<BrainConfig> | undefined, agentId?: string): boolean {
   if (!innerConfig(cfg).enabled) return false;
@@ -282,6 +301,8 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 const isNeed = (s: unknown): s is Need => typeof s === "string" && (NEEDS as readonly string[]).includes(s);
 const oneLine = (s: string, max: number) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t; };
 
+/** @internal used by inner-continuity.ts */
+export function innerHasTables(db: Database.Database): boolean { return hasTables(db); }
 function hasTables(db: Database.Database): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'inner_state'").get();
 }
@@ -435,6 +456,8 @@ function projectNeeds(db: Database.Database, s: StateRow, now: number, mods: Tra
   return out;
 }
 
+/** @internal used by inner-continuity.ts */
+export function adjustNeedDb(db: Database.Database, n: Need, delta: number, now: number): void { adjustNeed(db, n, delta, now); }
 function adjustNeed(db: Database.Database, n: Need, delta: number, now: number): void {
   const r = db.prepare("SELECT level FROM inner_needs WHERE need = ?").get(n) as { level: number } | undefined;
   const level = clamp01((r?.level ?? NEED_START) + delta);
@@ -442,6 +465,8 @@ function adjustNeed(db: Database.Database, n: Need, delta: number, now: number):
     .run(n, level, delta > 0 ? now : null, now);
 }
 
+/** @internal used by inner-continuity.ts */
+export function logInnerEventDb(db: Database.Database, kind: string, reason: string | null, intensity: number | null, rpe: number | null, detail: unknown, now: number): void { logEvent(db, kind, reason, intensity, rpe, detail, now); }
 function logEvent(db: Database.Database, kind: string, reason: string | null, intensity: number | null, rpe: number | null, detail: unknown, now: number): void {
   db.prepare("INSERT INTO inner_events (kind, reason, intensity, rpe, detail_json, at) VALUES (?, ?, ?, ?, ?, ?)").run(kind, reason, intensity, rpe, detail === undefined ? null : JSON.stringify(detail), now);
 }
@@ -501,6 +526,8 @@ export function innerTick(agentId: string, cfg: Partial<BrainConfig> = {}, now =
   return true;
 }
 
+/** @internal used by inner-continuity.ts: integrate the state up to `now` on an open db (the caller checked the layer is on). */
+export function innerTickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number, agentId?: string): void { tickDb(db, cfg, now, agentId); }
 function tickDb(db: Database.Database, cfg: Partial<BrainConfig>, now: number, agentId?: string): void {
   const s = ensureState(db, now);
   if (now <= s.last_tick_at && s.created_at !== now) { expireMoodlets(db, now, s.mood_state); return; }
@@ -660,7 +687,7 @@ function syncWants(db: Database.Database, mods: TraitMods, now: number): void {
 export interface InnerEventInput { kind: InnerEventKind; reason?: string; intensity?: number; tags?: string[]; expected?: number; actual?: number }
 /** Something happened that matters to a need or an incentive. Ticks first, then applies. */
 export function innerEvent(agentId: string, cfg: Partial<BrainConfig>, input: InnerEventInput, now = Date.now()): { ok: boolean; error?: string; rpe?: number; moodletId?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const spec = EVENT_SPECS[input.kind];
   if (!spec) return { ok: false, error: `kind must be one of ${EVENT_KINDS.join(", ")}` };
   const I = typeof input.intensity === "number" && Number.isFinite(input.intensity) && input.intensity >= 0 ? input.intensity : 1;
@@ -752,28 +779,34 @@ const EPISODE_CUE_INTENSITY = 0.5;
 
 export interface WantInput { what: string; why?: string; cost?: string; costHours?: number; need?: string; tags?: string[]; reward?: number; penalty?: number; expectedSuccess?: number; source?: string }
 export function addWant(agentId: string, cfg: Partial<BrainConfig>, input: WantInput, now = Date.now()): { ok: boolean; error?: string; id?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const what = oneLine(input.what ?? "", 200);
   if (!what) return { ok: false, error: "what is required" };
   if (input.need !== undefined && !isNeed(input.need)) return { ok: false, error: `need must be one of ${NEEDS.join(", ")}` };
   const db = getDb(agentId);
-  const id = randomUUID();
+  let id = "";
   db.transaction(() => {
     tickDb(db, cfg, now, agentId);
-    const deficit = input.need ? 1 - (needLevels(db).get(input.need as Need)?.level ?? NEED_START) : 0;
-    db.prepare(`INSERT INTO inner_wants (id, what, why, cost, cost_hours, source, need, tags_json, reward, penalty, expected_success, wanting, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`).run(
-      id, what, oneLine(input.why ?? "my own idea", 200), input.cost ? oneLine(input.cost, 60) : null, Math.max(0, input.costHours ?? 1),
-      oneLine(input.source ?? "agent", 60), input.need ?? null, JSON.stringify((input.tags ?? []).slice(0, 5)),
-      Math.max(0, input.reward ?? 0), Math.max(0, input.penalty ?? 0), input.expectedSuccess !== undefined ? clamp01(input.expectedSuccess) : null,
-      clamp01(0.5 + deficit * 0.5), now, now);
+    id = insertWantDb(db, { ...input, what }, now);
   })();
   return { ok: true, id };
+}
+/** @internal Insert one open want on an open db (already ticked, input already validated). Returns its id. */
+export function insertWantDb(db: Database.Database, input: WantInput, now: number): string {
+  const id = randomUUID();
+  const deficit = input.need ? 1 - (needLevels(db).get(input.need as Need)?.level ?? NEED_START) : 0;
+  db.prepare(`INSERT INTO inner_wants (id, what, why, cost, cost_hours, source, need, tags_json, reward, penalty, expected_success, wanting, status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`).run(
+    id, oneLine(input.what, 200), oneLine(input.why ?? "my own idea", 200), input.cost ? oneLine(input.cost, 60) : null, Math.max(0, input.costHours ?? 1),
+    oneLine(input.source ?? "agent", 60), input.need ?? null, JSON.stringify((input.tags ?? []).slice(0, 5)),
+    Math.max(0, input.reward ?? 0), Math.max(0, input.penalty ?? 0), input.expectedSuccess !== undefined ? clamp01(input.expectedSuccess) : null,
+    clamp01(0.5 + deficit * 0.5), now, now);
+  return id;
 }
 
 /** Finish a want. liking 0..1 = how it actually went; liking − wanting is the prediction error. */
 export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPrefix: string, input: { status: "done" | "dropped"; liking?: number; note?: string }, now = Date.now()): { ok: boolean; error?: string; rpe?: number; want?: string } {
-  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: "the inner-life layer is off (innerLife: false)" };
+  if (!innerLifeEnabled(cfg, agentId)) return { ok: false, error: INNER_OFF };
   const db = getDb(agentId);
   const p = (idOrPrefix ?? "").trim();
   if (p.length < 6) return { ok: false, error: "want_id (or a 6+ char prefix) is required" };
@@ -798,7 +831,12 @@ export function resolveWant(agentId: string, cfg: Partial<BrainConfig>, idOrPref
   return { ok: true, ...(rpe !== undefined ? { rpe } : {}), want: w.what };
 }
 
-/** Sleep: rest recovers, the phasic dopamine burst is spent, wants older than a week lapse. */
+/**
+ * Sleep: rest recovers, the phasic dopamine burst is spent, and wants the layer generated from a
+ * low need lapse after a week. Wants the agent wrote do not lapse: they stay until done or
+ * dropped, and come back on a widening schedule (inner-continuity.ts). Then the continuity step
+ * folds the day's away notes, reads bonds and writes the recent mood weather.
+ */
 export function innerSleep(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now()): boolean {
   if (!innerLifeEnabled(cfg, agentId)) return false;
   const db = getDb(agentId);
@@ -807,9 +845,10 @@ export function innerSleep(agentId: string, cfg: Partial<BrainConfig> = {}, now 
     tickDb(db, cfg, now, agentId);
     adjustNeed(db, "rest", 0.35, now);
     db.prepare("UPDATE inner_state SET last_rpe = 0, updated_at = ? WHERE id = 'singleton'").run(now);
-    db.prepare("UPDATE inner_wants SET status = 'lapsed', resolved_at = ?, updated_at = ? WHERE status = 'open' AND created_at < ?").run(now, now, now - 7 * 24 * HOUR);
+    db.prepare("UPDATE inner_wants SET status = 'lapsed', resolved_at = ?, updated_at = ? WHERE status = 'open' AND source LIKE 'need:%' AND created_at < ?").run(now, now, now - 7 * 24 * HOUR);
     syncNeedMoodlets(db, traitMods(readTraits(db, cfg, agentId), cfg), now);
   })();
+  continuitySleep(agentId, cfg, now);
   return true;
 }
 
@@ -883,7 +922,7 @@ function hoursLabel(ms: number): string {
   return `${Math.round(h / 24)}d`;
 }
 
-/** The compact (≤3 line) block for the turn header: current mood, top unmet need, top want. */
+/** The compact (≤3 line) state block for the turn header: current mood, top unmet need, top want. The continuity lines are added by innerTurnHeader. */
 export function formatInnerHeader(s: InnerSnapshot): string {
   const now = s.at;
   const lines: string[] = [];
@@ -917,17 +956,25 @@ const EVENT_EMOJI: Record<string, string> = Object.fromEntries([
   ["delighted", "😃"], ["disappointed", "😞"], ["glad", "🙂"], ["upset", "🙁"],
 ]);
 
-/** Tick, then build the header block. Empty string when off. Safe to call every turn. */
-export function innerTurnHeader(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now()): string {
+/**
+ * Tick, then build the header block. Empty string when off. Safe to call every turn.
+ * Up to 3 state lines (mood, top unmet need, top want) plus up to `headerExtraLines` (default 2)
+ * continuity lines, each shown only when it has something to say. `turnText` is this turn's
+ * message: a bond is shown when the person is named in it.
+ */
+export function innerTurnHeader(agentId: string, cfg: Partial<BrainConfig> = {}, now = Date.now(), opts: { turnText?: string } = {}): string {
   const c = innerConfig(cfg);
   if (!c.enabled || !c.header) return "";
   if (!innerTick(agentId, cfg, now)) return "";
   const s = innerSnapshot(agentId, cfg, now);
-  return s ? formatInnerHeader(s) : "";
+  if (!s) return "";
+  let extra: string[] = [];
+  try { extra = continuityTurn(agentId, cfg, now, { turnText: opts.turnText, topWantId: s.topWant?.id ?? null }); } catch { extra = []; }
+  return [formatInnerHeader(s), ...extra].join("\n");
 }
 
-/** Longer read-out for brain_inner status. */
-export function formatInnerStatus(s: InnerSnapshot): string {
+/** Longer read-out for brain_inner status. `extra` lines (the continuity sections) go before the closing note. */
+export function formatInnerStatus(s: InnerSnapshot, extra: string[] = []): string {
   const now = s.at;
   const out: string[] = [formatInnerHeader(s), ""];
   const traitText = (t: string) => {
@@ -947,6 +994,7 @@ export function formatInnerStatus(s: InnerSnapshot): string {
   for (const m of s.moodlets.slice(0, 8)) out.push(`  ${m.valence > 0 ? "+" : "−"} ${m.label} ${m.intensity.toFixed(2)}: ${m.reason}${m.expiresAt ? ` (${hoursLabel(m.expiresAt - now)} left)` : m.need ? " (until the need is met)" : ""}`);
   out.push(`Open wants (${s.wants.length}):`);
   for (const w of s.wants.slice(0, 8)) out.push(`  [${w.id.slice(0, 8)}] ${w.what} — why: ${w.why}; cost ${w.cost ?? `${w.costHours}h`}; from ${w.source}; motivation ${w.motivation.toFixed(2)} (wanting ${w.wanting.toFixed(2)})`);
+  out.push(...extra);
   out.push("These are functional states (numbers that steer attention and choice), not a claim of human-identical feeling.");
   return out.join("\n");
 }

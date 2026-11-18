@@ -34,7 +34,7 @@ import type { BrainNode } from "../src/types.js";
 
 // xanima-core's db.ts does not export a SCHEMA_VERSION symbol — assert against
 // the known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 30; // v30 = mood ladder, v29 = inner life, v28 = task frames + handoffs (v27 = procedures, v26 = created_at / accessed_at indexes)
+const SCHEMA_VERSION = 31; // v31 = inner-life continuity, v30 = mood ladder, v29 = inner life, v28 = task frames + handoffs (v27 = procedures, v26 = created_at / accessed_at indexes)
 
 function fresh(): string { return `test-${randomUUID().slice(0, 8)}`; }
 function freshSession(): string { return `sess-${randomUUID()}`; }
