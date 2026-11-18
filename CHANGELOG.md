@@ -2,6 +2,19 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## Unreleased: inner-life continuity (branch `inner-life-continuity`, schema v31)
+
+Four additions to the inner-life layer about carrying something from one wake to the next. Additive schema bump v31 (seven columns on `inner_wants` / `inner_state`, four new tables; nothing existing changes). Module `packages/core/src/inner-continuity.ts`. Design and examples: `docs/INNER-LIFE.md`, section "Continuity". No new tool: `brain_inner` gains four actions, so the tool count stays the same.
+
+- **Wants that persist.** `brain_inner wants {items}` adds a whole list in one call and skips items that match an open want. A want the agent wrote no longer lapses at sleep; only wants generated from a low need do. An own want that sits untouched comes back in the header with its why after 24 hours, then 2 days later, then 4, doubling up to 30 days, at most one reminder every 6 hours across all wants. `brain_inner touch {want_id}` restarts the clock. Config `innerLife.wantResurface`.
+- **Away notes.** `brain_inner away {hours, moved}` stores a short note about a gap as a low-importance episodic memory, only when the gap is at least `innerLife.away.minHours` (default 4). With no host note, the brain writes a minimal one from its own records after a gap between turn headers, and writes nothing when nothing moved. Sleep folds a day's notes into one.
+- **Recent mood weather.** At sleep the brain writes one or two plain sentences about the last 3 days from moodlet history and mood-ladder changes, using each state's own reason. Template only, no model call. Nothing is written when there is nothing to say. The newest shows as `[inner] lately: ...`. Config `innerLife.weather`.
+- **Bonds.** `brain_inner bond {who, what, valence, line}` keeps a thread per person: a one-line description, the exchanges that moved it, and a direction (warming / steady / cooling) derived from the last 7 days of exchanges. A good exchange feeds Relatedness a little. Sleep reads known bonds conservatively (a weighted memory naming the person is a weak exchange; mentions are only contact). A bond shows as one header line on a turn that names the person. Config `innerLife.bonds`.
+- **Header.** Still at most 3 state lines, plus at most `innerLife.headerExtraLines` (default 2) continuity lines, each shown only when it has something to say: one timely line (back-from-away, else a named bond, else a due want) and the weather. `innerTurnHeader` and `buildSelfModelHeader` take an optional `turnText`; `brain_turn_context` passes its `query`.
+- **Behaviour change to note:** on a brain that already has agent-written wants, those stop lapsing after 7 days and start coming back as reminders, one at a time.
+- Everything is a no-op when `innerLife` is off or the agent is in `excludeAgents`.
+- Tests: `packages/core/test/inner-continuity.test.ts` (30 tests), plus service coverage in `packages/server/test/continuity.test.ts`.
+
 ## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
 
 - **`innerLife.excludeAgents`:** listed agent ids skip the inner-life layer (tick, header, wants, events) without losing memory tools. For non-crew agents on the same service. Test: `inner-life-exclude.test.ts`.

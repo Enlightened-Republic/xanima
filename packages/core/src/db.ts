@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -971,6 +971,66 @@ export function migrateV30(db: Database.Database): void {
   try { db.exec("ALTER TABLE inner_state ADD COLUMN mood_state_at INTEGER"); } catch { /* already exists */ }
 }
 
+/**
+ * v31 - inner life, continuity (inner-continuity.ts). Additive only: columns on two
+ * inner_* tables plus four new tables. Nothing existing is altered or rewritten.
+ *   - inner_wants        touched_at / last_surfaced_at / surface_count: own wants resurface on a widening schedule
+ *   - inner_state        last_turn_at (when the last turn header was built), away_from / away_seen_at
+ *                        (a gap that was noticed and not yet described), last_sleep_at
+ *   - inner_away_notes   one row per away note (the memory itself is an episodic node); folded per day at sleep
+ *   - inner_weather      one or two plain sentences about the last few days, written at sleep
+ *   - inner_bonds        one row per person: who, a running one-line description
+ *   - inner_bond_events  the exchanges that moved a bond (what, valence, source)
+ */
+export function migrateV31(db: Database.Database): void {
+  const add = (table: string, col: string) => { try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch { /* already exists */ } };
+  add("inner_wants", "touched_at INTEGER");
+  add("inner_wants", "last_surfaced_at INTEGER");
+  add("inner_wants", "surface_count INTEGER NOT NULL DEFAULT 0");
+  add("inner_state", "last_turn_at INTEGER");
+  add("inner_state", "away_from INTEGER");
+  add("inner_state", "away_seen_at INTEGER");
+  add("inner_state", "last_sleep_at INTEGER");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inner_away_notes (
+      id          TEXT PRIMARY KEY,
+      node_id     TEXT,
+      gap_ms      INTEGER NOT NULL,
+      moved_json  TEXT NOT NULL DEFAULT '[]',
+      text        TEXT NOT NULL,
+      source      TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      folded_into TEXT
+    );
+    CREATE INDEX IF NOT EXISTS inner_away_notes_at ON inner_away_notes(at);
+    CREATE TABLE IF NOT EXISTS inner_weather (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      text    TEXT NOT NULL,
+      from_at INTEGER NOT NULL,
+      to_at   INTEGER NOT NULL,
+      at      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS inner_bonds (
+      id            TEXT PRIMARY KEY,
+      who           TEXT NOT NULL,
+      who_key       TEXT NOT NULL UNIQUE,
+      line          TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      last_event_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS inner_bond_events (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      bond_id TEXT NOT NULL,
+      what    TEXT NOT NULL,
+      valence REAL NOT NULL,
+      source  TEXT NOT NULL,
+      at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS inner_bond_events_bond ON inner_bond_events(bond_id, at);
+  `);
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1283,6 +1343,9 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 30) {
     migrateV30(db);
+  }
+  if (current < 31) {
+    migrateV31(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers

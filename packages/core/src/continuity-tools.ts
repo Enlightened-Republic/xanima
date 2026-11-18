@@ -11,7 +11,8 @@ import { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact 
 import { parseWhen, capLines, ago, DAY } from "./continuity-util.js";
 import { setTaskFrame, getTaskFrame, clearTaskFrame, listTaskFrames, DEFAULT_SESSION_KEY } from "./task-frame.js";
 import { buildNowContext, recentHandoffs } from "./now-context.js";
-import { innerLifeEnabled, innerEvent, addWant, resolveWant, innerTick, innerSnapshot, formatInnerHeader, formatInnerStatus, EVENT_KINDS, type InnerEventKind } from "./inner-life.js";
+import { innerLifeEnabled, innerEvent, addWant, resolveWant, innerTick, innerSnapshot, formatInnerHeader, formatInnerStatus, EVENT_KINDS, type InnerEventKind, type WantInput } from "./inner-life.js";
+import { addWants, touchWant, innerAway, bondUpdate, bondRemove, continuitySnapshot, formatContinuityStatus } from "./inner-continuity.js";
 
 import {
   confirmDecision,   recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
@@ -217,25 +218,32 @@ Object.assign(CONTINUITY_TOOL_DEFS, {
     inputSchema: { type: "object", properties: { plan_id: { type: "string" }, goal_id: { type: "string" }, topic: { type: "string" }, since: WHEN } },
   },
   brain_inner: {
-    description: "Your inner life (functional states, not a claim of human feeling): needs that drain (social, fun, inspiration, rest, autonomy, competence, relatedness), moodlets with a reason and an expiry, dopamine as reward prediction error, traits, and wants. status shows it all; event logs something that happened (collab, hobby, novelty, rest, work, chosen, assigned, success, failure, praise, reward, fine, rejection, pain; optional expected 0..1 for a prediction error); want adds a want (what, why, cost, need); done / drop finishes one (liking 0..1 = how it actually went). Traits come from your identity field \"Traits\" (brain_identity).",
+    description: "Your inner life (functional states, not a claim of human feeling): needs that drain (social, fun, inspiration, rest, autonomy, competence, relatedness), moodlets with a reason and an expiry, dopamine as reward prediction error, traits, and wants. status shows it all; event logs something that happened (collab, hobby, novelty, rest, work, chosen, assigned, success, failure, praise, reward, fine, rejection, pain; optional expected 0..1 for a prediction error); want adds a want (what, why, cost, need); done / drop finishes one (liking 0..1 = how it actually went). wants adds a whole list at once (items; ones you already have open are skipped). A want you wrote does not expire: if you leave it untouched it comes back in your header now and then, less often each time; touch says you are still on it. away stores a short note about time away (hours, moved: two or three things that changed) as a faint memory. bond keeps a thread with one person: who, plus what happened between you (valence -1..1, default 0.5) and / or line, your one-line description of the bond; its direction (warming / steady / cooling) comes from the recent exchanges. Traits come from your identity field \"Traits\" (brain_identity).",
     inputSchema: { type: "object", properties: {
-      action: { type: "string", enum: ["status", "event", "want", "done", "drop"] },
+      action: { type: "string", enum: ["status", "event", "want", "wants", "done", "drop", "touch", "away", "bond"] },
       kind: { type: "string", description: "event: what happened (collab | hobby | novelty | rest | work | chosen | assigned | success | failure | praise | reward | fine | rejection | pain)." },
       reason: { type: "string", description: "event: the reason, shown on the moodlet (e.g. \"shipped the walk clip\")." },
       intensity: { type: "number", description: "event: how strong (default 1)." },
       expected: { type: "number", description: "event: what you expected 0..1; with actual (default 1 for good kinds, 0 for bad) gives a reward prediction error." },
       actual: { type: "number", description: "event: what happened 0..1." },
       tags: { type: "array", items: { type: "string" }, description: "event / want: tags; rewards and fines are learned per tag." },
-      what: { type: "string", description: "want: what you want." },
-      why: { type: "string", description: "want: why." },
+      what: { type: "string", description: "want: what you want. bond: what happened between you, in one line." },
+      why: { type: "string", description: "want: why. touch: a new why, if it changed." },
+      items: { type: "array", description: "wants: the list. Each item is a string, or an object with what, why, cost, cost_hours, need, tags.", items: { type: ["string", "object"] } },
+      who: { type: "string", description: "bond: the person's name." },
+      valence: { type: "number", description: "bond: how the exchange moved things, -1..1 (default 0.5, an ordinary good exchange)." },
+      line: { type: "string", description: "bond: your running one-line description of the bond." },
+      remove: { type: "boolean", description: "bond: forget this bond and its history." },
+      hours: { type: "number", description: "away: how long you were away. Omit to use the gap the brain measured since your last turn." },
+      moved: { type: "array", items: { type: "string" }, description: "away: two or three short things that moved while you were gone. Omit (with no note) and the brain writes a minimal note from its own records." },
       cost: { type: "string", description: "want: cost, e.g. \"~1h\" or \"20 coins\"." },
       cost_hours: { type: "number", description: "want: rough time cost in hours." },
       need: { type: "string", description: "want: the need it serves." },
       reward: { type: "number", description: "want: expected reward 0..1." },
       penalty: { type: "number", description: "want: risk of fine / rejection / pain 0..1." },
-      want_id: { type: "string", description: "done / drop: the want id (or a 6+ char prefix)." },
+      want_id: { type: "string", description: "done / drop / touch: the want id (or a 6+ char prefix)." },
       liking: { type: "number", description: "done: how good it actually was, 0..1." },
-      note: { type: "string" },
+      note: { type: "string", description: "done / drop: how it went. away: a free line instead of (or after) moved." },
       format: { type: "string", enum: ["text", "json"] },
     }, required: ["action"] },
   },
@@ -492,11 +500,46 @@ export function dispatchContinuityTool(
         if (!r.ok) return err(r.error!);
         return ok(action === "done" ? `Done: ${r.want} (wanting vs liking: prediction error ${(r.rpe ?? 0) >= 0 ? "+" : ""}${(r.rpe ?? 0).toFixed(2)}).` : `Dropped: ${r.want}.`);
       }
-      if (action !== "status") return err("action must be status, event, want, done or drop");
+      if (action === "wants") {
+        const raw = Array.isArray(args["items"]) ? (args["items"] as unknown[]) : [];
+        const items = raw.map((it): string | WantInput => {
+          if (typeof it === "string") return it;
+          const o = (it && typeof it === "object" ? it : {}) as Record<string, unknown>;
+          return { what: str(o["what"]) ?? "", why: str(o["why"]), cost: str(o["cost"]), costHours: typeof o["cost_hours"] === "number" ? (o["cost_hours"] as number) : undefined, need: str(o["need"]), tags: strArr(o["tags"]) };
+        });
+        const r = addWants(agentId, config, items, t);
+        if (!r.ok) return err(r.error!);
+        if (json) return ok(JSON.stringify(r, null, 2));
+        const L = [`Added ${r.added.length} want${r.added.length === 1 ? "" : "s"}${r.skipped.length ? `, skipped ${r.skipped.length}` : ""}.`];
+        for (const a of r.added.slice(0, 20)) L.push(`  + [${a.id.slice(0, 8)}] ${a.what}`);
+        if (r.added.length > 20) L.push(`  + ${r.added.length - 20} more`);
+        for (const k of r.skipped.slice(0, 20)) L.push(`  - ${k.what || "(empty)"}: ${k.reason}`);
+        return ok(L.join("\n"));
+      }
+      if (action === "touch") {
+        const r = touchWant(agentId, config, str(args["want_id"]) ?? "", { why: str(args["why"]) }, t);
+        return r.ok ? ok(`Still on it: ${r.want}. Its reminder clock starts over.`) : err(r.error!);
+      }
+      if (action === "away") {
+        const r = innerAway(agentId, config, { hours: num("hours"), moved: strArr(args["moved"]), note: str(args["note"]) }, t);
+        if (!r.ok) return err(r.error!);
+        return ok(r.stored ? `Away note kept: ${r.text}` : `No away note: ${r.reason}.`);
+      }
+      if (action === "bond") {
+        const who = str(args["who"]) ?? "";
+        if (args["remove"] === true) { const r = bondRemove(agentId, config, who); return r.ok ? ok(`Bond with ${who} forgotten.`) : err(r.error!); }
+        const r = bondUpdate(agentId, config, { who, what: str(args["what"]), valence: num("valence"), line: str(args["line"]) }, t);
+        if (!r.ok) return err(r.error!);
+        if (json) return ok(JSON.stringify(r, null, 2));
+        const b = r.bond!;
+        return ok(`${r.created ? "New bond" : "Bond"} · ${b.who}: ${b.direction} (${b.because})${b.line ? `. ${b.line}` : ""}${r.fed ? ` Relatedness ${r.fed > 0 ? "+" : "−"}${Math.abs(r.fed).toFixed(2)}.` : ""}`);
+      }
+      if (action !== "status") return err("action must be status, event, want, wants, done, drop, touch, away or bond");
       innerTick(agentId, config, t);
       const s = innerSnapshot(agentId, config, t);
       if (!s) return ok("No inner state yet.");
-      return ok(json ? JSON.stringify(s, null, 2) : formatInnerStatus(s));
+      const cont = continuitySnapshot(agentId, config, t);
+      return ok(json ? JSON.stringify(cont ? { ...s, continuity: cont } : s, null, 2) : formatInnerStatus(s, cont ? formatContinuityStatus(cont, t) : []));
     }
     case "brain_forget_impact": {
       const r = forgetImpact(agentId, { cluster: str(args["cluster"]), query: str(args["query"]) }, config, now ?? Date.now());

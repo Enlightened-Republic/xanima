@@ -21,11 +21,11 @@ describe("inner life: schema v29", () => {
   it("creates the inner_* tables and bumps the schema version", () => {
     const id = fresh();
     const db = getDb(id);
-    expect(SCHEMA_VERSION).toBe(30);
+    expect(SCHEMA_VERSION).toBe(31);
     for (const t of ["inner_state", "inner_needs", "inner_moodlets", "inner_wants", "inner_events", "inner_incentives"]) {
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t)).toBeTruthy();
     }
-    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(30);
+    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(31);
     closeDb(id);
   });
 
@@ -37,7 +37,7 @@ describe("inner life: schema v29", () => {
     db.exec("DELETE FROM schema_version; INSERT INTO schema_version VALUES (28);");
     closeDb(id);
     const db2 = getDb(id);
-    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(30);
+    expect((db2.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(31);
     expect((db2.prepare("SELECT COUNT(*) AS n FROM nodes WHERE id = 'n-keep'").get() as { n: number }).n).toBe(1);
     expect(db2.prepare("SELECT name FROM sqlite_master WHERE name='inner_wants'").get()).toBeTruthy();
     closeDb(id);

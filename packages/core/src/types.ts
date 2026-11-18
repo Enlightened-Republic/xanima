@@ -319,7 +319,7 @@ export interface BrainConfig {
    * traits and wants, with a 3-line [inner] block in the turn header. `false` turns
    * it off; `true` or an object turns it on (an object is on unless it sets `enabled: false`). Default off.
    */
-  innerLife?: boolean | { enabled?: boolean; header?: boolean; autoWants?: boolean; traits?: string[]; traitsByAgent?: Record<string, string[]>; needRates?: Partial<Record<"social" | "fun" | "inspiration" | "rest" | "autonomy" | "competence" | "relatedness", number>>; ownerSessionIds?: string[]; ownerAllowFrom?: Array<string | number> };
+  innerLife?: boolean | import("./inner-life.js").InnerLifeConfig;
 }
 
 export interface InjectionCategories {
