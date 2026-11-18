@@ -11,6 +11,7 @@ import { replay, changesSince, formatChanges, conflicts, briefing, forgetImpact 
 import { parseWhen, capLines, ago, DAY } from "./continuity-util.js";
 import { setTaskFrame, getTaskFrame, clearTaskFrame, listTaskFrames, DEFAULT_SESSION_KEY } from "./task-frame.js";
 import { buildNowContext, recentHandoffs } from "./now-context.js";
+import { innerLifeEnabled, innerEvent, addWant, resolveWant, innerTick, innerSnapshot, formatInnerHeader, formatInnerStatus, EVENT_KINDS, type InnerEventKind } from "./inner-life.js";
 
 import {
   confirmDecision,   recordDecision, updateDecisionOutcome, queryDecisions, formatDecision, OUTCOME_STATUSES, type OutcomeStatus,
@@ -214,6 +215,29 @@ Object.assign(CONTINUITY_TOOL_DEFS, {
   brain_briefing: {
     description: "A short resume briefing for a plan, goal or topic: where it stands, what's open, recent decisions, commitments, the last reflection, and what changed. Read-only, budget-capped.",
     inputSchema: { type: "object", properties: { plan_id: { type: "string" }, goal_id: { type: "string" }, topic: { type: "string" }, since: WHEN } },
+  },
+  brain_inner: {
+    description: "Your inner life (functional states, not a claim of human feeling): needs that drain (social, fun, inspiration, rest, autonomy, competence, relatedness), moodlets with a reason and an expiry, dopamine as reward prediction error, traits, and wants. status shows it all; event logs something that happened (collab, hobby, novelty, rest, work, chosen, assigned, success, failure, praise, reward, fine, rejection, pain; optional expected 0..1 for a prediction error); want adds a want (what, why, cost, need); done / drop finishes one (liking 0..1 = how it actually went). Traits come from your identity field \"Traits\" (brain_identity).",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["status", "event", "want", "done", "drop"] },
+      kind: { type: "string", description: "event: what happened (collab | hobby | novelty | rest | work | chosen | assigned | success | failure | praise | reward | fine | rejection | pain)." },
+      reason: { type: "string", description: "event: the reason, shown on the moodlet (e.g. \"shipped the walk clip\")." },
+      intensity: { type: "number", description: "event: how strong (default 1)." },
+      expected: { type: "number", description: "event: what you expected 0..1; with actual (default 1 for good kinds, 0 for bad) gives a reward prediction error." },
+      actual: { type: "number", description: "event: what happened 0..1." },
+      tags: { type: "array", items: { type: "string" }, description: "event / want: tags; rewards and fines are learned per tag." },
+      what: { type: "string", description: "want: what you want." },
+      why: { type: "string", description: "want: why." },
+      cost: { type: "string", description: "want: cost, e.g. \"~1h\" or \"20 coins\"." },
+      cost_hours: { type: "number", description: "want: rough time cost in hours." },
+      need: { type: "string", description: "want: the need it serves." },
+      reward: { type: "number", description: "want: expected reward 0..1." },
+      penalty: { type: "number", description: "want: risk of fine / rejection / pain 0..1." },
+      want_id: { type: "string", description: "done / drop: the want id (or a 6+ char prefix)." },
+      liking: { type: "number", description: "done: how good it actually was, 0..1." },
+      note: { type: "string" },
+      format: { type: "string", enum: ["text", "json"] },
+    }, required: ["action"] },
   },
   brain_forget_impact: {
     description: "Dry run: what would be lost by compacting or forgetting a cluster (a node id and its members) or everything matching a query — unique facts, protected items, links cut, references, recoverable episodes. Changes nothing.",
@@ -445,6 +469,34 @@ export function dispatchContinuityTool(
       const since = args["since"] !== undefined ? parseWhen(args["since"], now ?? Date.now()) : undefined;
       const r = briefing(agentId, { planId: str(args["plan_id"]), goalId: str(args["goal_id"]), topic: str(args["topic"]), ...(since ? { since } : {}) }, config, now ?? Date.now());
       return r.ok ? ok(r.text!) : err(r.error!);
+    }
+    case "brain_inner": {
+      if (!innerLifeEnabled(config, agentId)) return err("the inner-life layer is off (innerLife: false)");
+      const action = (str(args["action"]) ?? "status").toLowerCase();
+      const t = now ?? Date.now();
+      const num = (k: string) => (typeof args[k] === "number" && Number.isFinite(args[k]) ? (args[k] as number) : undefined);
+      if (action === "event") {
+        const kind = str(args["kind"]) as InnerEventKind | undefined;
+        if (!kind || !EVENT_KINDS.includes(kind)) return err(`kind must be one of ${EVENT_KINDS.join(", ")}`);
+        const r = innerEvent(agentId, config, { kind, reason: str(args["reason"]), intensity: num("intensity"), expected: num("expected"), actual: num("actual"), tags: strArr(args["tags"]) }, t);
+        if (!r.ok) return err(r.error!);
+        const s = innerSnapshot(agentId, config, t);
+        return ok(`Logged ${kind}${r.rpe !== undefined ? ` (prediction error ${r.rpe >= 0 ? "+" : ""}${r.rpe.toFixed(2)})` : ""}.${s ? `\n${formatInnerHeader(s)}` : ""}`);
+      }
+      if (action === "want") {
+        const r = addWant(agentId, config, { what: str(args["what"]) ?? "", why: str(args["why"]), cost: str(args["cost"]), costHours: num("cost_hours"), need: str(args["need"]), tags: strArr(args["tags"]), reward: num("reward"), penalty: num("penalty") }, t);
+        return r.ok ? ok(`Want added ${r.id}.`) : err(r.error!);
+      }
+      if (action === "done" || action === "drop") {
+        const r = resolveWant(agentId, config, str(args["want_id"]) ?? "", { status: action === "done" ? "done" : "dropped", liking: num("liking"), note: str(args["note"]) }, t);
+        if (!r.ok) return err(r.error!);
+        return ok(action === "done" ? `Done: ${r.want} (wanting vs liking: prediction error ${(r.rpe ?? 0) >= 0 ? "+" : ""}${(r.rpe ?? 0).toFixed(2)}).` : `Dropped: ${r.want}.`);
+      }
+      if (action !== "status") return err("action must be status, event, want, done or drop");
+      innerTick(agentId, config, t);
+      const s = innerSnapshot(agentId, config, t);
+      if (!s) return ok("No inner state yet.");
+      return ok(json ? JSON.stringify(s, null, 2) : formatInnerStatus(s));
     }
     case "brain_forget_impact": {
       const r = forgetImpact(agentId, { cluster: str(args["cluster"]), query: str(args["query"]) }, config, now ?? Date.now());

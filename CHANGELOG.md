@@ -2,6 +2,32 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## Unreleased: crew traits + moods linger (branch `inner-life`, schema v30)
+
+- **`innerLife.excludeAgents`:** listed agent ids skip the inner-life layer (tick, header, wants, events) without losing memory tools. For non-crew agents on the same service. Test: `inner-life-exclude.test.ts`.
+- **`innerLife.episodeCueSkip`:** event kinds that conversation cues may not fire (e.g. `["success"]`). For hosts that report real shipping through `brain_inner event` / `inner:success` tags, so an agent saying "shipped" in chat no longer resets Proud. Explicit events and memory tags still land. Test: `inner-life-cue-skip.test.ts`.
+- **Mayor's rules (2026-11-05) as cues:** brainstorming / dreaming up / designing together count as hobby + collab (Fun, Social); "ran with your idea", "you didn't ask for" count as chosen (Autonomy). `owner_chat` also feeds Fun +0.15 and Social +0.2. Test: `inner-life-mayor-rules.test.ts`.
+
+- **Crew traits have real effects:** restless, loyal, secretly loyal, petty, vain, blunt, sharp, direct, precise, exacting, sharp-tongued, allusive, amused, dry-humored, protective, careful, tinkerer and chaotic join the trait table (all factors 0.7..1.5). `vain` makes praise land 1.4× harder.
+- **Invented traits work:** whole phrases are kept; an exact trait wins, otherwise trait words and a small synonym map inside the phrase apply (softeners like "a little" give half strength). Unknown words are kept and shown with no effect. A trait named twice applies once. Loss aversion now combines across traits as a ratio.
+- **Per-agent traits:** `innerLife.traitsByAgent` (keyed by brain id) sits between the identity field `Traits` (still wins) and `innerLife.traits`. Status shows each phrase's mapping and the drain multipliers; json adds `traitEffects` and `drainRates`.
+- **Mood ladder (v30):** Sad / Low / Okay / Good / Happy stored in `inner_state.mood_state`, one rung per tick toward the raw mood, with a 0.1 hysteresis margin; Happy needs one good moodlet ≥ 0.5. Moodlets matching the rung decay 1.5× slower (emotional inertia). Shown in the header, status and `moodState` in json. Additive migration `migrateV30`.
+
+## Unreleased: inner life (branch `inner-life`)
+
+A functional motivation layer: needs that drain, dopamine as reward prediction error, expectancy, incentives, traits, moodlets and wants, with a compact `[inner]` block in every turn header so the agent feels the push. These are described as functional states. Nothing claims human-identical feeling. Additive schema bump v29 (six new `inner_*` tables; nothing existing changes). Full design: `docs/INNER-LIFE.md`.
+
+- **Needs (homeostatic drives):** Social, Fun, Inspiration and Rest, plus the SDT needs Autonomy, Competence and Relatedness. Each is a 0..1 meter that drains with time (Rest drains with conversation load and recovers with idle time and sleep). Discomfort = deficit², so urgent needs dominate. A large deficit becomes a need-bound moodlet (Lonely, Bored, Tired...) that lasts until the need is met.
+- **Dopamine:** reward prediction error δ = actual − expected, taken from decision outcomes (against `predicted_confidence`), finished wants (liking − wanting) and events with an `expected` value. A phasic burst decays over hours. A tonic reward-rate EMA sets effort. δ makes Proud / Delighted / Disappointed moodlets and moves Competence and Inspiration.
+- **Expectancy and incentives:** motivation = effort × expected success × value. Value weighs the need pull, the trait pull, and learned per-tag rewards against fines, rejection and pain (loss aversion 2).
+- **Moodlets:** a reason, an intensity and an expiry. They come from events, emotional_weight on memories, prediction errors and unmet needs. Repeats stack deeper and longer, with no mood clamp. They return to baseline only through decay, expiry, or meeting the need.
+- **Traits:** 3-5, read from the identity field `Traits` (versioned through `brain_identity`). They bias need drain rates, moodlet intensity and duration, loss aversion, and which needs turn into wants.
+- **Wants:** a new item type (what, why, cost, source, wanting, liking), generated from unmet needs and traits or added by the agent.
+- **Header:** up to 3 lines (mood, top unmet need, top want) in the local self-model header and in `brain_turn_context` (as `inner`, and at the head of `text` so current hosts render it).
+- **Tool `brain_inner`** (`status | event | want | done | drop`). Tool count: 34 on the MCP server, 40 in the plugin union. It also runs without the tool: memories tagged `inner:<kind>`, conservative conversation cues, decision outcomes, kept commitments and sleep all feed it.
+- **Config `innerLife`** (default on): `false` turns it off. An object sets `header`, `autoWants`, `traits` and `needRates`.
+- Tests: `packages/core/test/inner-life.test.ts` covers needs decay, moodlet expiry and stacking, reward prediction error, expectancy, incentives, the header, the v28→v29 migration, the tool and reset. Two Windows-only test fixes close a brain before deleting its temp dir. Demo: `node scripts/inner-life-demo.mjs`.
+
 ## 0.7.0 (Xanima) — 2026-10-20
 
 The current task is a first-class thing. One failure drove this release: an owner hands a project to another agent in conversation, keeps working on something else, says "continue" — and the agent jumps back to the old project, because the brain still lists it as an active goal, the drift nudge says "take a step toward it", and recall on the word "continue" surfaces exactly the leftovers an unfinished project leaves behind. After the host compacts the conversation the agent cannot even see the handoff any more; stored state wins by default. Additive schema bump v28. Packages: `xanima-core` 0.7.0, `xanima` 0.7.0 (MCP server, 33 tools), `xanima-server` 0.7.0. The OpenClaw plugin `xanima-openclaw` 0.7.0 vendors this engine.

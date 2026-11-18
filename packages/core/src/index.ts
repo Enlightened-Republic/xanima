@@ -316,7 +316,14 @@ export {
 export type {
   RelatedNode, RetractResult, SupersedeOptions, SupersedeResult, SleepSummary, BrainStatus,
 } from "./beliefs.js";
-export { SCHEMA_VERSION, migrateV19 } from "./db.js";
+export { SCHEMA_VERSION, migrateV19, migrateV29, migrateV30 } from "./db.js";
+// inner life (v29, mood ladder v30): functional motivation layer
+export {
+  NEEDS, NEED_SPECS, NEED_START, REST_START, EVENT_KINDS, TRAIT_EFFECTS, innerConfig, innerLifeEnabled, readTraits, traitMods, rewardPredictionError, moodletIntensity,
+  TRAIT_SYNONYMS, MOOD_RUNGS, resolveTrait, moodRungFor, nextMoodRung,
+  innerTick, innerEvent, addWant, resolveWant, innerSleep, innerSnapshot, formatInnerHeader, formatInnerStatus, innerTurnHeader,
+} from "./inner-life.js";
+export type { Need, InnerEventKind, InnerLifeConfig, NeedState, Moodlet, Want, InnerSnapshot, InnerEventInput, WantInput, MoodRung, TraitResolution } from "./inner-life.js";
 export { buildStatusFooter } from "./context-assembly.js";
 export { parseBeliefArgs } from "./tools.js";
 

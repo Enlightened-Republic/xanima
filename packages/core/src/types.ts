@@ -313,6 +313,13 @@ export interface BrainConfig {
   /** Agent-evolved identity (brain_identity): locked fields (default ["Name"]), rate limit, size caps. See identity.ts. */
   /** brain_identity guardrails; each is one switch (see identity.ts). */
   identity?: { selfEdit?: boolean; refuseUntrusted?: boolean; saveRefusedAsNote?: boolean; locked?: string[]; maxChangesPerDay?: number; maxChars?: number; requireAttestation?: boolean; changesFrom?: Array<"owner_turn" | "reflection" | "agent_turn"> };
+  // ── inner life (schema v29, inner-life.ts) ──
+  /**
+   * Functional motivation layer: decaying needs, reward prediction error, moodlets,
+   * traits and wants, with a 3-line [inner] block in the turn header. `false` turns
+   * it off; an object tunes it. Default on.
+   */
+  innerLife?: boolean | { enabled?: boolean; header?: boolean; autoWants?: boolean; traits?: string[]; traitsByAgent?: Record<string, string[]>; needRates?: Partial<Record<"social" | "fun" | "inspiration" | "rest" | "autonomy" | "competence" | "relatedness", number>>; ownerSessionIds?: string[]; ownerAllowFrom?: Array<string | number> };
 }
 
 export interface InjectionCategories {

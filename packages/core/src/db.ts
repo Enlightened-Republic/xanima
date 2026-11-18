@@ -395,7 +395,7 @@ function initSchema(db: Database.Database): void {
 }
 
 /** Current brain.db schema version (v19 = Xanima 0.1.0 belief metadata, v20 = 0.2.0 decisions + goals, v21 = 0.2.0 draft expiry / note acks / lesson merges). */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 30;
 
 /**
  * v19 — Xanima 0.1.0 belief metadata. Additive only (ADD COLUMN with constant
@@ -874,6 +874,103 @@ export function migrateV28(db: Database.Database): void {
   }
 }
 
+/**
+ * v29 — inner life (functional motivation layer, inner-life.ts). Additive only:
+ * new tables, nothing existing is altered, so node / edge / episode counts never change.
+ *   • inner_state      singleton: tonic dopamine (reward-rate EMA), last reward prediction error, last tick
+ *   • inner_needs      homeostatic need meters (social, fun, inspiration, rest, autonomy, competence, relatedness)
+ *   • inner_moodlets   short-lived states with a reason, an intensity and an expiry (or bound to an unmet need)
+ *   • inner_wants      wants: what / why / cost / source, with separate wanting and liking
+ *   • inner_events     log of what moved the state (events, prediction errors)
+ *   • inner_incentives learned reward / penalty expectations per tag (seek rewards, avoid fines)
+ */
+export function migrateV29(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inner_state (
+      id              TEXT PRIMARY KEY CHECK (id = 'singleton'),
+      tonic_da        REAL NOT NULL DEFAULT 0.5,
+      last_rpe        REAL NOT NULL DEFAULT 0,
+      last_rpe_at     INTEGER,
+      last_rpe_reason TEXT,
+      last_tick_at    INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS inner_needs (
+      need        TEXT PRIMARY KEY,
+      level       REAL NOT NULL,
+      last_met_at INTEGER,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS inner_moodlets (
+      id           TEXT PRIMARY KEY,
+      key          TEXT NOT NULL,
+      label        TEXT NOT NULL,
+      reason       TEXT NOT NULL,
+      valence      REAL NOT NULL,
+      intensity    REAL NOT NULL,
+      intensity_at INTEGER NOT NULL,
+      half_life_h  REAL,
+      need         TEXT,
+      source       TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      expires_at   INTEGER,
+      ended_at     INTEGER,
+      ended_reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS inner_moodlets_active ON inner_moodlets(ended_at, expires_at);
+    CREATE TABLE IF NOT EXISTS inner_wants (
+      id               TEXT PRIMARY KEY,
+      what             TEXT NOT NULL,
+      why              TEXT NOT NULL,
+      cost             TEXT,
+      cost_hours       REAL NOT NULL DEFAULT 1,
+      source           TEXT NOT NULL,
+      need             TEXT,
+      tags_json        TEXT NOT NULL DEFAULT '[]',
+      reward           REAL NOT NULL DEFAULT 0,
+      penalty          REAL NOT NULL DEFAULT 0,
+      expected_success REAL,
+      wanting          REAL NOT NULL,
+      liking           REAL,
+      status           TEXT NOT NULL DEFAULT 'open',
+      outcome_note     TEXT,
+      rpe              REAL,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL,
+      resolved_at      INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS inner_wants_status ON inner_wants(status, need);
+    CREATE TABLE IF NOT EXISTS inner_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind        TEXT NOT NULL,
+      reason      TEXT,
+      intensity   REAL,
+      rpe         REAL,
+      detail_json TEXT,
+      at          INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS inner_events_at ON inner_events(at);
+    CREATE TABLE IF NOT EXISTS inner_incentives (
+      tag        TEXT PRIMARY KEY,
+      reward     REAL NOT NULL DEFAULT 0,
+      penalty    REAL NOT NULL DEFAULT 0,
+      n          INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+}
+
+/**
+ * v30 - inner life mood ladder (emotional inertia). Additive only: two columns on
+ * inner_state. mood_state is the named rung (sad / low / okay / good / happy) that
+ * moves at most one step per tick toward the raw mood; mood_state_at is when it last moved.
+ */
+export function migrateV30(db: Database.Database): void {
+  try { db.exec("ALTER TABLE inner_state ADD COLUMN mood_state TEXT NOT NULL DEFAULT 'okay'"); } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE inner_state ADD COLUMN mood_state_at INTEGER"); } catch { /* already exists */ }
+}
+
 function runMigrations(db: Database.Database): void {
   const TARGET = SCHEMA_VERSION;
   const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
@@ -1180,6 +1277,12 @@ function runMigrations(db: Database.Database): void {
   }
   if (current < 28) {
     migrateV28(db);
+  }
+  if (current < 29) {
+    migrateV29(db);
+  }
+  if (current < 30) {
+    migrateV30(db);
   }
 
   // Refresh FTS5 update triggers to include the WHEN clauses (code-2 F1.3). Old triggers
