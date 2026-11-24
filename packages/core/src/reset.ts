@@ -50,6 +50,10 @@ const LEARNED_STATE_TABLES: readonly string[] = [
   "procedures", "procedure_runs",
   // current-task anchors (one per session)
   "task_frames",
+  // inner life (functional motivation layer): needs, moodlets, wants, prediction errors
+  "inner_state", "inner_needs", "inner_moodlets", "inner_wants", "inner_events", "inner_incentives",
+  // inner life, continuity (v31): away notes, mood weather, bonds
+  "inner_away_notes", "inner_weather", "inner_bonds", "inner_bond_events",
 ];
 
 /**

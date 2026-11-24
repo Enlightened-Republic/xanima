@@ -316,7 +316,25 @@ export {
 export type {
   RelatedNode, RetractResult, SupersedeOptions, SupersedeResult, SleepSummary, BrainStatus,
 } from "./beliefs.js";
-export { SCHEMA_VERSION, migrateV19 } from "./db.js";
+export { SCHEMA_VERSION, migrateV19, migrateV29, migrateV30, migrateV31 } from "./db.js";
+// inner life (v29, mood ladder v30): functional motivation layer
+export {
+  NEEDS, NEED_SPECS, NEED_START, REST_START, EVENT_KINDS, TRAIT_EFFECTS, innerConfig, innerLifeEnabled, readTraits, traitMods, rewardPredictionError, moodletIntensity,
+  TRAIT_SYNONYMS, MOOD_RUNGS, resolveTrait, moodRungFor, nextMoodRung,
+  innerTick, innerEvent, addWant, resolveWant, innerSleep, innerSnapshot, formatInnerHeader, formatInnerStatus, innerTurnHeader,
+} from "./inner-life.js";
+// inner life, continuity (v31): wants that come back, away notes, mood weather, bonds
+export {
+  continuityConfig, addWants, touchWant, dueWant, innerAway, awayText, composeAwayItems, foldAwayNotes, durationWords,
+  weatherText, weatherData, composeWeather, recentWeather, feelingPhrase,
+  bondUpdate, bondRemove, listBonds, bondDirection, bondSleep, BOND_DIRECTIONS, BOND_WARM_AT, BOND_COOL_AT,
+  continuityTurn, continuitySleep, continuitySnapshot, formatContinuityStatus, MAX_WANTS_PER_IMPORT,
+} from "./inner-continuity.js";
+export type {
+  ContinuityConfig, WantResurfaceConfig, AwayConfig, WeatherConfig, BondsConfig, ImportWantsResult, DueWant, AwayInput, AwayResult,
+  WeatherData, WeatherMoodlet, BondDirection, BondView, BondInput, BondResult, ContinuitySnapshot,
+} from "./inner-continuity.js";
+export type { Need, InnerEventKind, InnerLifeConfig, NeedState, Moodlet, Want, InnerSnapshot, InnerEventInput, WantInput, MoodRung, TraitResolution } from "./inner-life.js";
 export { buildStatusFooter } from "./context-assembly.js";
 export { parseBeliefArgs } from "./tools.js";
 

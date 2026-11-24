@@ -62,7 +62,7 @@ describe("schema v20", () => {
       let db: Database.Database;
       try { db = getDb(b); } finally { delete process.env["XANIMA_DB_PATH"]; }
       expect(census(db)).toEqual(before);
-      expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(28);
+      expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(31);
       expect(db.prepare("SELECT node_id, version, tracked, status, priority FROM goals").all()).toEqual([{ node_id: g, version: 1, tracked: 0, status: "active", priority: 3 }]);
       expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
       // 0.5.1: a backfilled (untracked) legacy goal is not an "active goal" for the header
@@ -70,7 +70,7 @@ describe("schema v20", () => {
       closeDb(b);
       const c = fresh("v19c");
       process.env["XANIMA_DB_PATH"] = file;
-      try { const d2 = getDb(c); expect(census(d2)).toEqual(before); expect((d2.prepare("SELECT COUNT(*) AS n FROM goals").get() as { n: number }).n).toBe(1); } finally { delete process.env["XANIMA_DB_PATH"]; }
+      try { const d2 = getDb(c); expect(census(d2)).toEqual(before); expect((d2.prepare("SELECT COUNT(*) AS n FROM goals").get() as { n: number }).n).toBe(1); } finally { delete process.env["XANIMA_DB_PATH"]; closeDb(c); }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

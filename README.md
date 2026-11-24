@@ -1,18 +1,19 @@
 # Xanima
 
-> **Current release: 0.7.0** (2026-10-20), on npm as
+> **Current release: 0.8.0** (2026-11-18), on npm as
 > [`xanima`](https://www.npmjs.com/package/xanima) (MCP server) and
 > [`xanima-core`](https://www.npmjs.com/package/xanima-core) (engine); the
 > OpenClaw plugin [`xanima-openclaw`](https://github.com/Enlightened-Republic/xanima-openclaw)
-> 0.7.0 vendors the same engine. Highlights: every conversation carries a
-> **current task** (`brain_now`, set automatically by `brain_plan` and from the
-> owner's own words) that is injected every turn as `[BRAIN: now]`, survives
-> context compaction, and makes a bare "continue" mean *this* task rather than an
-> older plan or goal; goals and plans can be **handed off** to another agent
-> (out of the header, drift checks and heartbeats until taken back); nudges are
-> reminders, never orders to switch tasks. Additive schema v28. 0.6.0 brought
-> dormant forgetting, owner-only identity changes, verified procedures and
-> `brain_expand {source_turns: N}`. Full history, including 0.1.0–0.5.0:
+> vendors the same engine. Highlights: an optional **inner life** layer
+> (`brain_inner`, off by default, `"innerLife": true` turns it on): needs that
+> drain, dopamine as reward prediction error, moodlets and a mood ladder, traits
+> read from the identity, and wants, shown as a few `[inner]` lines in each turn
+> header; with continuity on top (wants that come back, away notes, recent mood
+> weather, bonds per person). Additive schema v29-v31. 0.7.0 brought the
+> **current task** (`brain_now`, injected every turn as `[BRAIN: now]`) and goal
+> and plan **handoffs**; 0.6.0 brought dormant forgetting, owner-only identity
+> changes, verified procedures and `brain_expand {source_turns: N}`. Full
+> history, including 0.1.0-0.5.0:
 > [CHANGELOG.md](CHANGELOG.md).
 
 *Formerly Sharpwave.* Upgrading from `sharpwave` / `openwave`: install
@@ -203,6 +204,10 @@ Stored state (active goals, drift nudges, parked plans) is re-injected every tur
 Every node is typed, and the type affects how it's consolidated and retrieved:
 
 `identity` · `semantic` · `episodic` · `pattern` · `skill` · `goal` · `emotion` · `procedural` · `schema`
+
+## Inner life (functional states)
+
+Each brain can also keep a motivation layer. Needs drain over time (social, fun, inspiration, rest, autonomy, competence, relatedness). Dopamine works as a reward prediction error. Moodlets carry a reason and an expiry, wants carry a cost, and 3-5 traits are read from the identity. Each turn's header gets up to three `[inner]` lines: the current mood, the top unmet need and the top want. Up to two more appear when they have something to say: a note on coming back after time away, a bond with a person named in the turn, a want of the agent's own that has gone untouched, and a sentence about the last few days. These are functional states that steer attention and choice. They are not a claim of human-identical feeling. See [docs/INNER-LIFE.md](docs/INNER-LIFE.md); the layer is off by default, turn it on with `innerLife: true`.
 
 ## Configuration
 

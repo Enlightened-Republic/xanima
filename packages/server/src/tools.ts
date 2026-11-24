@@ -32,6 +32,7 @@ import {
   gateWrite, gateToolCall, gateNotice, GATED_TOOLS, parseScopeTags, setScopeTags,
   setFocus, readFocus, describeFocus, tickFocus, applyInjectionControls, injectionCategories,
   IDENTITY_TOOL_NAME, dispatchIdentityTool, identityConfig,
+  innerTurnHeader,
 } from "xanima-core";
 import { ROOM_SERVICE_TOOLS, ROOM_SERVICE_TOOL_NAMES, FOCUS_SERVICE_TOOL, callRoomTool, subscribedRoomItems, roomStatusLines, roomConflictText } from "./rooms-tools.js";
 import { join as joinPath } from "node:path";
@@ -590,7 +591,11 @@ export async function callTool(ctx: ToolContext, name: string, rawArgs: Record<s
           const goals = !cats.goals ? [] : (db.prepare("SELECT title FROM goals g WHERE status = 'active' AND tracked = 1 AND version = (SELECT MAX(version) FROM goals x WHERE x.lineage_id = g.lineage_id) ORDER BY priority ASC, created_at DESC LIMIT 3").all() as Array<{ title: string }>).map((g) => g.title);
           return { identity: (identityConfig(cfg).maxChars ? identity.slice(0, Math.max(400, identityConfig(cfg).maxChars)) : identity), goals };
         });
-        return ok(JSON.stringify({ ...r, ...(nowBlock ? { now: nowBlock } : {}), ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
+        // Inner life (v29): mood, top unmet need, top want. Folded into `text` so hosts that already
+        // render the turn-context text show it without an update; also returned on its own as `inner`.
+        const inner = await ctx.brains.write(brain, () => { try { return innerTurnHeader(brain, cfg, Date.now(), { turnText: q }); } catch { return ""; } });
+        const text = inner ? (r.text ? `${inner}\n${r.text}` : inner) : r.text;
+        return ok(JSON.stringify({ ...r, text, ...(inner ? { inner } : {}), ...(nowBlock ? { now: nowBlock } : {}), ...(sm.identity ? { identity: sm.identity } : {}), ...(sm.goals.length ? { activeGoals: sm.goals } : {}) }));
       }
       const { visibility: _v, writer_agent_id: _w, agent: _a, session_key: sessionKeyArg, ...rest0 } = args;
       const sessionKey = typeof sessionKeyArg === "string" ? sessionKeyArg.slice(0, 200) : undefined;

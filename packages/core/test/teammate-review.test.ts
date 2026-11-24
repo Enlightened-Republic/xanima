@@ -31,7 +31,7 @@ import type { BrainNode, NeuromodState } from "../src/types.js";
 
 // xanima-core's db.ts does not export SCHEMA_VERSION — assert against the
 // known current migration target (mirrors packages/core/test/db.test.ts).
-const SCHEMA_VERSION = 28; // v28 = task frames + handoffs (v27 = procedures, v26 = created_at / accessed_at indexes)
+const SCHEMA_VERSION = 31; // v31 = inner-life continuity, v30 = mood ladder, v29 = inner life, v28 = task frames + handoffs (v27 = procedures, v26 = created_at / accessed_at indexes)
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 

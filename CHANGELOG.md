@@ -2,6 +2,56 @@
 
 All notable changes to the Sharpwave TypeScript MCP server.
 
+## 0.8.0 (Xanima) - 2026-11-18
+
+Inner life: an optional motivation layer on top of memory (needs, dopamine, moodlets, a mood ladder, traits, wants), plus continuity for it (wants that come back, away notes, recent mood weather, bonds). Additive schema bumps v29, v30 and v31; nothing existing changes, and node / edge / episode counts never change on migration. Packages: `xanima-core` 0.8.0, `xanima` 0.8.0 (MCP server), `xanima-server` 0.8.0. Design doc: `docs/INNER-LIFE.md`.
+
+### Migration note: inner life is off by default
+
+- **Fresh installs and hosts on 0.7.0:** nothing to do. With no `innerLife` key the layer is off: no ticks, no `[inner]` header lines, and `brain_inner` refuses with a message that says how to turn it on. The v29-v31 tables are created and left unused.
+- **Hosts that ran the `inner-life` branch before this release:** that branch had the layer on unless `innerLife` was `false`. If your config has no `innerLife` key, the layer goes quiet after the upgrade. Add `"innerLife": true` to the brain config to keep it (on `xanima-server` that is `brain.innerLife` in the service `config.json`; restart to pick it up).
+- **Hosts with an `innerLife` object** (for example only `traitsByAgent` or `excludeAgents`): no change. Writing the block is opting in; only `"enabled": false` inside it turns the layer off.
+- Turning the layer off deletes nothing. The `inner_*` tables stay as they are.
+
+### Continuity (schema v31)
+
+Four additions to the inner-life layer about carrying something from one wake to the next. Additive schema bump v31 (seven columns on `inner_wants` / `inner_state`, four new tables; nothing existing changes). Module `packages/core/src/inner-continuity.ts`. Design and examples: `docs/INNER-LIFE.md`, section "Continuity". No new tool: `brain_inner` gains four actions, so the tool count stays the same.
+
+- **Wants that persist.** `brain_inner wants {items}` adds a whole list in one call and skips items that match an open want. A want the agent wrote no longer lapses at sleep; only wants generated from a low need do. An own want that sits untouched comes back in the header with its why after 24 hours, then 2 days later, then 4, doubling up to 30 days, at most one reminder every 6 hours across all wants. `brain_inner touch {want_id}` restarts the clock. Config `innerLife.wantResurface`.
+- **Away notes.** `brain_inner away {hours, moved}` stores a short note about a gap as a low-importance episodic memory, only when the gap is at least `innerLife.away.minHours` (default 4). With no host note, the brain writes a minimal one from its own records after a gap between turn headers, and writes nothing when nothing moved. Sleep folds a day's notes into one.
+- **Recent mood weather.** At sleep the brain writes one or two plain sentences about the last 3 days from moodlet history and mood-ladder changes, using each state's own reason. Template only, no model call. Nothing is written when there is nothing to say. The newest shows as `[inner] lately: ...`. Config `innerLife.weather`.
+- **Bonds.** `brain_inner bond {who, what, valence, line}` keeps a thread per person: a one-line description, the exchanges that moved it, and a direction (warming / steady / cooling) derived from the last 7 days of exchanges. A good exchange feeds Relatedness a little. Sleep reads known bonds conservatively (a weighted memory naming the person is a weak exchange; mentions are only contact). A bond shows as one header line on a turn that names the person. Config `innerLife.bonds`.
+- **Header.** Still at most 3 state lines, plus at most `innerLife.headerExtraLines` (default 2) continuity lines, each shown only when it has something to say: one timely line (back-from-away, else a named bond, else a due want) and the weather. `innerTurnHeader` and `buildSelfModelHeader` take an optional `turnText`; `brain_turn_context` passes its `query`.
+- **Behaviour change to note:** on a brain that already has agent-written wants, those stop lapsing after 7 days and start coming back as reminders, one at a time.
+- Everything is a no-op when `innerLife` is off or the agent is in `excludeAgents`.
+- Tests: `packages/core/test/inner-continuity.test.ts` (30 tests), plus service coverage in `packages/server/test/continuity.test.ts`.
+
+### Crew traits and moods that linger (schema v30)
+
+- **`innerLife.excludeAgents`:** listed agent ids skip the inner-life layer (tick, header, wants, events) without losing memory tools. For non-crew agents on the same service. Test: `inner-life-exclude.test.ts`.
+- **`innerLife.episodeCueSkip`:** event kinds that conversation cues may not fire (e.g. `["success"]`). For hosts that report real shipping through `brain_inner event` / `inner:success` tags, so an agent saying "shipped" in chat no longer resets Proud. Explicit events and memory tags still land. Test: `inner-life-cue-skip.test.ts`.
+- **Mayor's rules (2026-11-05) as cues:** brainstorming / dreaming up / designing together count as hobby + collab (Fun, Social); "ran with your idea", "you didn't ask for" count as chosen (Autonomy). `owner_chat` also feeds Fun +0.15 and Social +0.2. Test: `inner-life-mayor-rules.test.ts`.
+
+- **Crew traits have real effects:** restless, loyal, secretly loyal, petty, vain, blunt, sharp, direct, precise, exacting, sharp-tongued, allusive, amused, dry-humored, protective, careful, tinkerer and chaotic join the trait table (all factors 0.7..1.5). `vain` makes praise land 1.4× harder.
+- **Invented traits work:** whole phrases are kept; an exact trait wins, otherwise trait words and a small synonym map inside the phrase apply (softeners like "a little" give half strength). Unknown words are kept and shown with no effect. A trait named twice applies once. Loss aversion now combines across traits as a ratio.
+- **Per-agent traits:** `innerLife.traitsByAgent` (keyed by brain id) sits between the identity field `Traits` (still wins) and `innerLife.traits`. Status shows each phrase's mapping and the drain multipliers; json adds `traitEffects` and `drainRates`.
+- **Mood ladder (v30):** Sad / Low / Okay / Good / Happy stored in `inner_state.mood_state`, one rung per tick toward the raw mood, with a 0.1 hysteresis margin; Happy needs one good moodlet ≥ 0.5. Moodlets matching the rung decay 1.5× slower (emotional inertia). Shown in the header, status and `moodState` in json. Additive migration `migrateV30`.
+
+### Inner life (schema v29)
+
+A functional motivation layer: needs that drain, dopamine as reward prediction error, expectancy, incentives, traits, moodlets and wants, with a compact `[inner]` block in every turn header so the agent feels the push. These are described as functional states. Nothing claims human-identical feeling. Additive schema bump v29 (six new `inner_*` tables; nothing existing changes). Full design: `docs/INNER-LIFE.md`.
+
+- **Needs (homeostatic drives):** Social, Fun, Inspiration and Rest, plus the SDT needs Autonomy, Competence and Relatedness. Each is a 0..1 meter that drains with time (Rest drains with conversation load and recovers with idle time and sleep). Discomfort = deficit², so urgent needs dominate. A large deficit becomes a need-bound moodlet (Lonely, Bored, Tired...) that lasts until the need is met.
+- **Dopamine:** reward prediction error δ = actual − expected, taken from decision outcomes (against `predicted_confidence`), finished wants (liking − wanting) and events with an `expected` value. A phasic burst decays over hours. A tonic reward-rate EMA sets effort. δ makes Proud / Delighted / Disappointed moodlets and moves Competence and Inspiration.
+- **Expectancy and incentives:** motivation = effort × expected success × value. Value weighs the need pull, the trait pull, and learned per-tag rewards against fines, rejection and pain (loss aversion 2).
+- **Moodlets:** a reason, an intensity and an expiry. They come from events, emotional_weight on memories, prediction errors and unmet needs. Repeats stack deeper and longer, with no mood clamp. They return to baseline only through decay, expiry, or meeting the need.
+- **Traits:** 3-5, read from the identity field `Traits` (versioned through `brain_identity`). They bias need drain rates, moodlet intensity and duration, loss aversion, and which needs turn into wants.
+- **Wants:** a new item type (what, why, cost, source, wanting, liking), generated from unmet needs and traits or added by the agent.
+- **Header:** up to 3 lines (mood, top unmet need, top want) in the local self-model header and in `brain_turn_context` (as `inner`, and at the head of `text` so current hosts render it).
+- **Tool `brain_inner`** (`status | event | want | done | drop`). Tool count: 34 on the MCP server, 40 in the plugin union. It also runs without the tool: memories tagged `inner:<kind>`, conservative conversation cues, decision outcomes, kept commitments and sleep all feed it.
+- **Config `innerLife`** (off by default, see the migration note above): `true` or an object turns it on. An object sets `header`, `autoWants`, `traits` and `needRates`.
+- Tests: `packages/core/test/inner-life.test.ts` covers needs decay, moodlet expiry and stacking, reward prediction error, expectancy, incentives, the header, the v28→v29 migration, the tool and reset. Two Windows-only test fixes close a brain before deleting its temp dir. Demo: `node scripts/inner-life-demo.mjs`.
+
 ## 0.7.0 (Xanima) — 2026-10-20
 
 The current task is a first-class thing. One failure drove this release: an owner hands a project to another agent in conversation, keeps working on something else, says "continue" — and the agent jumps back to the old project, because the brain still lists it as an active goal, the drift nudge says "take a step toward it", and recall on the word "continue" surfaces exactly the leftovers an unfinished project leaves behind. After the host compacts the conversation the agent cannot even see the handoff any more; stored state wins by default. Additive schema bump v28. Packages: `xanima-core` 0.7.0, `xanima` 0.7.0 (MCP server, 33 tools), `xanima-server` 0.7.0. The OpenClaw plugin `xanima-openclaw` 0.7.0 vendors this engine.

@@ -2,6 +2,7 @@ import { runBeliefReviewPass, saveSleepSummary, countNodesEdges } from "./belief
 import { runDecisionPass, prepareLessonVectors } from "./decisions.js";
 import { runProcedurePass } from "./procedures.js";
 import { expireTaskFrames } from "./task-frame.js";
+import { innerSleep } from "./inner-life.js";
 import { runDriftPass } from "./goals.js";
 import { runReflectionPass } from "./reflection.js";
 import { expireOpenItemDrafts } from "./open-items.js";
@@ -273,6 +274,9 @@ export async function runConsolidation(
   try { refl = await runReflectionPass(agentId, config, log); } catch (err) { log.warn(`[xanima] reflection pass failed (agent=${agentId}): ${String(err)}`); }
   try { openExpired = expireOpenItemDrafts(agentId, config).length; } catch (err) { log.warn(`[xanima] open-item expiry failed (agent=${agentId}): ${String(err)}`); }
   try { commit = runCommitmentCheck(agentId, config); } catch (err) { log.warn(`[xanima] commitment check failed (agent=${agentId}): ${String(err)}`); }
+
+  // Inner life (v29): sleep restores rest, spends the phasic dopamine burst, lapses week-old wants.
+  try { innerSleep(agentId, config); } catch (err) { log.warn(`[xanima] inner-life sleep failed (agent=${agentId}): ${String(err)}`); }
 
   // Phase 4: Deep — near-zero retrievability orphans go dormant (config.forgetting
   // "dormant", default) or are physically pruned ("delete").
