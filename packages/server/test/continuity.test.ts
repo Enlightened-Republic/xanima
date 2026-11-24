@@ -35,7 +35,7 @@ describe("continuity tools on the service", () => {
   });
 
   it("goals: set / supersede with history / list; turn context delivers the alignment note once and fires keyword triggers", async () => {
-    const h = await startService({ brain: { intentDriftCheck: "daily", driftDays: 7 } });
+    const h = await startService({ brain: { intentDriftCheck: "daily", driftDays: 7, innerLife: true } });
     try {
       const a = h.mint("a");
       const g = await tool(h.url, a, "brain_set_goal", { title: "Ship the billing migration", priority: "critical", keywords: ["billing", "migration"], triggers: [{ kind: "keyword", keywords: ["invoice"] }] });
@@ -65,6 +65,22 @@ describe("continuity tools on the service", () => {
       expect(ti.inner).toMatch(/^\[inner · functional states\] mood (Sad|Low|Okay|Good|Happy)( → [A-Z][a-z]+)? [+−]\d\.\d\d/);
       expect(ti.inner!.split("\n").length).toBeLessThanOrEqual(3);
       expect(ti.text.startsWith(ti.inner!)).toBe(true);
+      // inner life, continuity (v31): the new brain_inner actions work over the service, and a bond
+      // shows as one extra header line on a turn that names the person (never more than 3 + 2 lines)
+      const imp = await tool(h.url, a, "brain_inner", { action: "wants", items: ["Paint the gate", { what: "Plant the herb box", why: "morning sun on the sill" }, "paint the gate"] });
+      expect(imp.isError).toBe(false);
+      expect(imp.text).toMatch(/^Added 2 wants, skipped 1\./);
+      const bond = await tool(h.url, a, "brain_inner", { action: "bond", who: "Ines", what: "traded records", valence: 0.8, line: "records and honest notes" });
+      expect(bond.text).toMatch(/^New bond · Ines: warming \(1 exchange in 7d, net \+0\.8\)/);
+      expect((await tool(h.url, a, "brain_inner", { action: "away", hours: 9, moved: ["the bakery reopened"] })).text).toBe("Away note kept: Away about 9 hours. While I was gone: the bakery reopened.");
+      const tb = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "has Ines been by today?" })).text) as { inner: string };
+      expect(tb.inner.split("\n").length).toBeLessThanOrEqual(5);
+      expect(tb.inner).toContain("[inner] back after ~9h away: the bakery reopened");
+      expect(tb.inner).toMatch(/\[inner\] bond · Ines \(warming\): records and honest notes · last: traded records, \d+m ago/);
+      const tn = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "what is for lunch?" })).text) as { inner: string };
+      expect(tn.inner).not.toContain("bond ·");
+      expect((await tool(h.url, a, "brain_inner", { action: "status" })).text).toContain("Bonds (1):");
+      expect((await tool(h.url, h.mint("ro4", ["read"]), "brain_inner", { action: "bond", who: "Ines", what: "x" })).isError).toBe(true); // writes need the write scope
       const t3 = JSON.parse((await tool(h.url, a, "brain_turn_context", { query: "send the invoice please" })).text);
       expect(t3.triggered[0].why).toBe('you mentioned "invoice"');
       const st = await tool(h.url, a, "brain_status", { visibility: "private" });

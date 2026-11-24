@@ -40,8 +40,8 @@ describe("schema v28", () => {
   it("is current, additive and idempotent: task_frames + handoff columns on plans and goals", () => {
     const a = fresh();
     const db = getDb(a);
-    expect(SCHEMA_VERSION).toBe(30);
-    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(30);
+    expect(SCHEMA_VERSION).toBe(31);
+    expect((db.prepare("SELECT version FROM schema_version").get() as { version: number }).version).toBe(31);
     expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'task_frames'").get()).toBeTruthy();
     for (const t of ["plans", "goals"]) for (const c of ["handoff_to", "handoff_note", "handoff_at"]) {
       expect((db.prepare(`SELECT COUNT(*) n FROM pragma_table_info('${t}') WHERE name = ?`).get(c) as { n: number }).n, `${t}.${c}`).toBe(1);
